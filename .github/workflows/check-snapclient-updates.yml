@@ -57,9 +57,11 @@ jobs:
           git checkout -b "$BRANCH"
           git add apps/snapclient/metadata.yaml apps/snapclient/docker-compose.yml apps/snapclient/assets/Dockerfile
           git commit -m "chore: update snapclient ${CURRENT} → ${LATEST}"
-          git push origin "$BRANCH"
-          gh pr create \
-            --title "chore: update snapclient ${CURRENT} → ${LATEST}" \
-            --body "Automated update of Snapclient from \`${CURRENT}\` to \`${LATEST}\`." \
-            --base main \
-            --head "$BRANCH"
+          git push --force origin "$BRANCH"
+          if ! gh pr list --head "$BRANCH" --json number --jq '.[0].number' | grep -q .; then
+            gh pr create \
+              --title "chore: update snapclient ${CURRENT} → ${LATEST}" \
+              --body "Automated update of Snapclient from \`${CURRENT}\` to \`${LATEST}\`." \
+              --base main \
+              --head "$BRANCH"
+          fi
