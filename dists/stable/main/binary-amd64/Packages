@@ -4,10 +4,10 @@ Architecture: all
 Maintainer: Stig Dreyer <stig.dreyer@busy-brain.de>
 Installed-Size: 17
 Filename: pool/main/ziganka-container-store_0.3.0-1_all.deb
-Size: 3510
-MD5sum: b7a448448770e15122d17e81a0e91654
-SHA1: 7b2ef9d03508dfdb7dc738a50261fdc8099c5880
-SHA256: 13c7184bb31f3ce9d26c9a761572adeda013a58226c2493c48e02d17ade27de0
+Size: 3504
+MD5sum: 96a0310b0d4af0e4d5df8814a89cae31
+SHA1: 0330a5d18790d1508ae3b43f724878093e790b16
+SHA256: ad1bf390ddd5f70ee8ede070dec8a54855b467c3d670e5561c10e99bcf5bb50b
 Section: admin
 Priority: optional
 Homepage: https://github.com/stigdreyer/ziganka-containers
@@ -25,17 +25,17 @@ Description: Ziganka container application store for Cockpit Container Apps
 Tag: role::container-store
 
 Package: ziganka-homeassistant-container
-Version: 2026.5.0-13
+Version: 2026.5.0-14
 Architecture: all
 Maintainer: Stig Dreyer <stig.dreyer@busy-brain.de>
-Installed-Size: 52
+Installed-Size: 51
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Conflicts: boat-homeassistant-container
-Filename: pool/main/ziganka-homeassistant-container_2026.5.0-13_all.deb
-Size: 10724
-MD5sum: ba5754030a06fad8baa60f256ba003f7
-SHA1: 4390587dad468c22098134a2384d5b40c4a38f82
-SHA256: 62de462f55047d70cf19372d2013c058926ece7f74dee6468630bf6c9825e48a
+Filename: pool/main/ziganka-homeassistant-container_2026.5.0-14_all.deb
+Size: 10690
+MD5sum: 7ae4064fae2e8dd33b41f61bb2900d29
+SHA1: 9f80d6e81d548cf69e2ec6cc92fc3fcfbbc0a212
+SHA256: c524ce8836595c68fde949f6701051d2af6d3f4c7c901247e91991a75ca5f19c
 Section: web
 Priority: optional
 Homepage: https://www.home-assistant.io/
@@ -60,10 +60,10 @@ Installed-Size: 54
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Conflicts: boat-mayara-container
 Filename: pool/main/ziganka-mayara-container_3.4.2-5_all.deb
-Size: 16018
-MD5sum: b8df62322a991d8052aed9b94ac59aae
-SHA1: 6cd9e6b76c6f3dd6a9f30adb6aac4be2faaf4624
-SHA256: ea4d76e3ef71ba2cb66107f44cbe874da55f0d1fc978329a6cf962215425ece1
+Size: 16030
+MD5sum: 4cd8f962581c165f58847bba0949c325
+SHA1: 9ae83c257584aefc3d7c382e9bc82ca31add9282
+SHA256: 653eb4dea59dd496c88963930b02c6eff9102b2d8c7ef44acefe9bf6c6976ab9
 Section: web
 Priority: optional
 Homepage: https://github.com/MarineYachtRadar/mayara-server
@@ -82,17 +82,17 @@ Description: Marine radar display and ARPA tracking server
 Tag: role::container-app, field::ziganka, category::navigation, interface::web, use::monitoring, x-display-name::Mayara Radar Server
 
 Package: ziganka-music-assistant-container
-Version: 2.8.6-11
+Version: 2.8.6-12
 Architecture: all
 Maintainer: Stig Dreyer <stig.dreyer@busy-brain.de>
 Installed-Size: 57
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Conflicts: boat-music-assistant-container
-Filename: pool/main/ziganka-music-assistant-container_2.8.6-11_all.deb
-Size: 16840
-MD5sum: df3cabc0f6921822fa9f0be241f105a7
-SHA1: ff9b215bd846203b053f0fd56917e64fde609395
-SHA256: 9a5386a11c0164f7f19abdb03a38f3e432b1c1a27c6cc572e5e2e8fbd8a03d40
+Filename: pool/main/ziganka-music-assistant-container_2.8.6-12_all.deb
+Size: 16850
+MD5sum: 01cd10f7805c29d7886d391c014d7a12
+SHA1: 689546da7fbbabb0396ac7671733d4f8e669a9a8
+SHA256: dacd340561fba86946e3981151eca5ae200b9c2c88fd193e9c254291d8328cc1
 Section: sound
 Priority: optional
 Homepage: https://www.music-assistant.io/
@@ -119,10 +119,10 @@ Installed-Size: 52
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10), ziganka-music-assistant-container
 Conflicts: boat-snapclient-container
 Filename: pool/main/ziganka-snapclient-container_0.34.0-14_all.deb
-Size: 12258
-MD5sum: 301a7aa3d14d0849286464404bd6684b
-SHA1: f76ace789107ba1c129164bb24a694a024670518
-SHA256: 041edb08a1f50bea018ea9a661351491be622a6a44069d526fc14115e7addd6c
+Size: 12254
+MD5sum: b5c40ea098fb048c3ee21bdb7cabc09c
+SHA1: e0648a62166e68655b80f975ce08d1b84f195bec
+SHA256: 33117e06b3c60b001772eaf0e050e37efb1b93a2c255d51256ddeb10816a1bd4
 Section: sound
 Priority: optional
 Homepage: https://github.com/badaix/snapcast
