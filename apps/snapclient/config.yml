@@ -15,9 +15,9 @@ groups:
       - id: SNAPCLIENT_SOUNDCARD
         label: Sound Card
         type: string
-        default: default
+        default: "plughw:CARD=vc4hdmi1,DEV=0"
         required: true
-        description: "ALSA sound card to use for audio output (run 'aplay -L' on the host to list options)"
+        description: "ALSA sound card for audio output. Default targets the HALPI2's HDMI port via the vc4-hdmi driver. Run 'aplay -L' on the host to list alternatives (e.g. plughw:CARD=vc4hdmi1,DEV=0 for the second HDMI output)."
 
       - id: SNAPCLIENT_NAME
         label: Player Name

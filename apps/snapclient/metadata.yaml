@@ -36,6 +36,6 @@ default_config:
   SNAPSERVER_HOST: "127.0.0.1"
   # Run `aplay -L` on the host to list devices. On a HALPI2 with one active
   # HDMI output use plughw:CARD=vc4hdmi0,DEV=0 or plughw:CARD=vc4hdmi1,DEV=0.
-  SNAPCLIENT_SOUNDCARD: default
+  SNAPCLIENT_SOUNDCARD: "plughw:CARD=vc4hdmi1,DEV=0"
   # Logical room name shown in MA. Override per zone for multi-room.
   SNAPCLIENT_NAME: Saloon
