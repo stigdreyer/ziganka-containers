@@ -42,6 +42,7 @@ jobs:
           sed -i "s/^version: ${CURRENT}-1/version: ${LATEST}-1/" apps/snapclient/metadata.yaml
           sed -i "s/^upstream_version: ${CURRENT}/upstream_version: ${LATEST}/" apps/snapclient/metadata.yaml
           sed -i "s/SNAPCLIENT_VERSION: \"${CURRENT}\"/SNAPCLIENT_VERSION: \"${LATEST}\"/" apps/snapclient/docker-compose.yml
+          sed -i "s/ARG SNAPCLIENT_VERSION=${CURRENT}/ARG SNAPCLIENT_VERSION=${LATEST}/" apps/snapclient/assets/Dockerfile
 
       - name: Open pull request
         if: steps.check.outputs.has_update == 'true'
@@ -54,7 +55,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          git add apps/snapclient/metadata.yaml apps/snapclient/docker-compose.yml
+          git add apps/snapclient/metadata.yaml apps/snapclient/docker-compose.yml apps/snapclient/assets/Dockerfile
           git commit -m "chore: update snapclient ${CURRENT} → ${LATEST}"
           git push origin "$BRANCH"
           gh pr create \
