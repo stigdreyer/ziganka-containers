@@ -36,9 +36,7 @@ web_ui:
   protocol: http
   visible: true
 routing:
-  # Home Assistant has its own auth; let it handle login. Traefik just routes.
-  auth:
-    mode: none
+  host_port: 8123
 layout:
   priority: 60
   width: 2

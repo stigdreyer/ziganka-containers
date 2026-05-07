@@ -21,6 +21,7 @@ services:
     # zone clients) can connect. Web UI on :8095 is reached via Traefik
     # through halos-proxy-network — no need to publish it here.
     ports:
+      - "8095:8095"          # MA API/WebSocket — needed by HA (host-networked)
       - "1704:1704"          # Snapserver stream port
       - "1705:1705"          # Snapserver TCP control port
       - "1780:1780"          # Snapserver HTTP / web client
