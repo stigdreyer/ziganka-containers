@@ -11,15 +11,6 @@ groups:
         required: true
         description: "Timezone for Home Assistant (e.g. Europe/Oslo, Atlantic/Canary)"
 
-  - id: bluetooth_info
-    label: Bluetooth Devices
-    description: >
-      Home Assistant has direct access to the HALPI2 Bluetooth adapter via BlueZ.
-      BLE devices (e.g. Govee H6127/H6125 LED strips) are added through the HA UI:
-      Settings → Devices & Services → Add Integration → "Govee BLE".
-      HA will auto-discover nearby Govee devices when they are powered on.
-    fields: []
-
   - id: signalk
     label: SignalK Integration
     description: >
