@@ -1,0 +1,30 @@
+name: Wyoming Piper
+app_id: wyoming-piper
+version: 2.2.2-1
+upstream_version: 2.2.2
+description: Local offline text-to-speech engine for Home Assistant
+long_description: |
+  Wyoming Piper provides offline neural text-to-speech, exposed over the
+  Wyoming protocol on TCP port 10200. Home Assistant connects to it via
+  the built-in Wyoming integration and uses it for spoken alert
+  announcements through the saloon Fusion stereo (via Music Assistant).
+
+  Runs entirely locally so the boat does not need internet to announce
+  alerts. The configured voice model is downloaded from Hugging Face on
+  first start (one-time, ~60MB per voice) and cached in the container's
+  data volume.
+homepage: https://github.com/rhasspy/wyoming-piper
+maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
+license: Apache-2.0
+tags:
+  - role::container-app
+  - field::ziganka
+  - category::automation
+debian_section: sound
+architecture: all
+depends:
+  - docker.io (>= 20.10) | docker-ce (>= 20.10)
+web_ui:
+  enabled: false
+default_config:
+  TTS_VOICE: en_GB-alan-medium

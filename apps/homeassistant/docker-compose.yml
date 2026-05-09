@@ -14,6 +14,12 @@ services:
         tag: "{{.Name}}"
     environment:
       - TZ=${HA_TZ:-Europe/Oslo}
+      - SIGNALK_URL=${SIGNALK_URL:-http://localhost:3000}
+      - FUSION_ZONE=${FUSION_ZONE:-zone1}
+      - FUSION_AUX_SOURCE=${FUSION_AUX_SOURCE:-aux1}
+      - ALERT_VOL_EMERGENCY=${ALERT_VOL_EMERGENCY:-20}
+      - ALERT_VOL_ALARM=${ALERT_VOL_ALARM:-18}
+      - ALERT_VOL_WARNING=${ALERT_VOL_WARNING:-14}
     volumes:
       - ${CONTAINER_DATA_ROOT}/config:/config
       - /run/dbus:/run/dbus:ro

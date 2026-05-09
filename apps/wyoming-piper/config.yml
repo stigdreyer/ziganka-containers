@@ -1,0 +1,17 @@
+version: "1.0"
+
+groups:
+  - id: voice
+    label: Voice
+    fields:
+      - id: TTS_VOICE
+        label: Piper Voice Model
+        type: string
+        default: en_GB-alan-medium
+        required: true
+        description: >
+          Piper voice model to use for text-to-speech. Downloaded from
+          Hugging Face on first start (one-time, ~60MB) and cached.
+          Browse available voices at https://github.com/rhasspy/piper/blob/master/VOICES.md
+          — common picks: en_GB-alan-medium (UK male, clear), en_US-amy-medium
+          (US female), en_GB-jenny_dioco-medium (UK female).

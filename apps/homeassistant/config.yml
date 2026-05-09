@@ -10,3 +10,65 @@ groups:
         default: Europe/Oslo
         required: true
         description: "Timezone for Home Assistant (e.g. Europe/Oslo, Atlantic/Canary)"
+
+  - id: bluetooth_info
+    label: Bluetooth Devices
+    description: >
+      Home Assistant has direct access to the HALPI2 Bluetooth adapter via BlueZ.
+      BLE devices (e.g. Govee H6127/H6125 LED strips) are added through the HA UI:
+      Settings → Devices & Services → Add Integration → "Govee BLE".
+      HA will auto-discover nearby Govee devices when they are powered on.
+    fields: []
+
+  - id: signalk
+    label: SignalK Integration
+    description: >
+      Connection to the SignalK server for the Ziganka alert system. The
+      SignalK URL is consumed by the HA package at /config/packages/ziganka_alerts.yaml
+      (REST commands and the signalk-ha HACS integration).
+    fields:
+      - id: SIGNALK_URL
+        label: SignalK Server URL
+        type: string
+        default: "http://localhost:3000"
+        required: true
+        description: "Base URL of the SignalK server. Default works because HA runs on the host network alongside SignalK."
+
+  - id: fusion_alerts
+    label: Fusion Alert Routing
+    description: >
+      Settings used by the Ziganka alert automation when routing spoken
+      alerts through the Fusion MS-BB-100. Volumes use the Fusion's 0-24
+      scale. Higher priorities are louder; caution is silent on the audio
+      channel by design (LEDs and push only).
+    fields:
+      - id: FUSION_ZONE
+        label: Fusion Output Zone
+        type: string
+        default: zone1
+        required: true
+        description: "SignalK Fusion zone path segment (e.g. zone1). Most single-stereo installs use zone1."
+      - id: FUSION_AUX_SOURCE
+        label: Fusion AUX Source ID
+        type: string
+        default: aux1
+        required: true
+        description: "Fusion source identifier the HALPI2 audio is wired to. Verify by GETing entertainment/device/fusion1/output/zone1/source after manually selecting AUX on the stereo."
+      - id: ALERT_VOL_EMERGENCY
+        label: Emergency Alert Volume (0-24)
+        type: string
+        default: "20"
+        required: true
+        description: "Fusion volume for emergency-priority alerts. Loud; tune at anchor."
+      - id: ALERT_VOL_ALARM
+        label: Alarm Alert Volume (0-24)
+        type: string
+        default: "18"
+        required: true
+        description: "Fusion volume for alarm-priority alerts."
+      - id: ALERT_VOL_WARNING
+        label: Warning Alert Volume (0-24)
+        type: string
+        default: "14"
+        required: true
+        description: "Fusion volume for warning-priority alerts. Should be audible across the saloon at anchor without being startling."

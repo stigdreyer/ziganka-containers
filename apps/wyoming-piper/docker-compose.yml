@@ -1,0 +1,25 @@
+services:
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:2.2.2
+    container_name: wyoming-piper
+    init: true
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+    ports:
+      - "10200:10200"
+    volumes:
+      - ${CONTAINER_DATA_ROOT}/data:/data
+    command: >
+      --voice ${TTS_VOICE:-en_GB-alan-medium}
+      --uri tcp://0.0.0.0:10200
+      --data-dir /data
+      --download-dir /data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('localhost',10200),timeout=2); s.close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
