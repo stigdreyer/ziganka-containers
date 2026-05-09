@@ -25,17 +25,17 @@ Description: Ziganka container application store for Cockpit Container Apps
 Tag: role::container-store
 
 Package: ziganka-homeassistant-container
-Version: 2026.5.0-15
+Version: 2026.5.0-17
 Architecture: all
 Maintainer: Stig Dreyer <stig.dreyer@busy-brain.de>
-Installed-Size: 52
+Installed-Size: 54
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Conflicts: boat-homeassistant-container
-Filename: pool/main/ziganka-homeassistant-container_2026.5.0-15_all.deb
-Size: 10718
-MD5sum: a91c4542871510daffa93a1b558d318c
-SHA1: 6398824a2b1470783138472ba2fbbab29856bfab
-SHA256: 1f952a785b678f3521bf8139c5c233264661c1aa5cc9a6a84593c85bf09003fb
+Filename: pool/main/ziganka-homeassistant-container_2026.5.0-17_all.deb
+Size: 11500
+MD5sum: c040e624f1a089df67b32ef7fa5ecf1b
+SHA1: 2e5352562b8fbb5a94d7d50413c2a51834840f7a
+SHA256: 9689d8b075faa58a275d0b3dc4eb7f337de6c5cb56a17f417183012394916db3
 Section: web
 Priority: optional
 Homepage: https://www.home-assistant.io/
@@ -60,10 +60,10 @@ Installed-Size: 54
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Conflicts: boat-mayara-container
 Filename: pool/main/ziganka-mayara-container_3.4.2-5_all.deb
-Size: 16020
-MD5sum: 80e9d35ef3055e90a73e9366c76181cc
-SHA1: cc0c2c9bc4bbbd9bd4ad8aad2a895e662f5ef92f
-SHA256: 90f5face60074439397d45592c8a1c27c2b379aeb663055871ec62b348b30cb7
+Size: 16026
+MD5sum: 1118a83d1c52e55d8a8a15265852f284
+SHA1: 84b2570809ef0fafe070920cb2402c100afd7e8e
+SHA256: 5a6ca8bb74b19b3ab5e978c42bd6c197430a35c0a662506fcfb3cee211fb1915
 Section: web
 Priority: optional
 Homepage: https://github.com/MarineYachtRadar/mayara-server
@@ -90,9 +90,9 @@ Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-c
 Conflicts: boat-music-assistant-container
 Filename: pool/main/ziganka-music-assistant-container_2.8.6-12_all.deb
 Size: 16850
-MD5sum: 3ec636fdc391cbc496945794d219774a
-SHA1: 881a449e4e62c0019f56f179743df9fa5c5f88d1
-SHA256: 81aaeba758af0585d992d95055591a3969cbbdf83c918f3042f19e10a02d1efa
+MD5sum: 31637858609cd8cecf0fa12af86f6b01
+SHA1: e86345d348814cece977495678906b8ce7d55772
+SHA256: e8b86581fbe2f77dce1f56bae1507409777f50fb27c40ce02cbfdb06911d0957
 Section: sound
 Priority: optional
 Homepage: https://www.music-assistant.io/
@@ -119,10 +119,10 @@ Installed-Size: 52
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10), ziganka-music-assistant-container
 Conflicts: boat-snapclient-container
 Filename: pool/main/ziganka-snapclient-container_0.34.0-14_all.deb
-Size: 12256
-MD5sum: 8d1b6d5db4e7b603d7ecf75d36a497cc
-SHA1: 35fdd52bde2996e17166901ffaf8044c73316ed4
-SHA256: a0b0f602950f29519697e511e6ec12548a203dc008b5914530795f743ea377f7
+Size: 12254
+MD5sum: baaa756cbc4f9d4e11ab426f36a82e94
+SHA1: d7f3fc920bb9a5200667951a55f2465010f0e311
+SHA256: cbbd3a3d2dac00e0052274cc09d81ae960ef0728c067064424808747cf6d5786
 Section: sound
 Priority: optional
 Homepage: https://github.com/badaix/snapcast
@@ -133,4 +133,30 @@ Description: Snapcast client for HDMI audio playback
  /dev/snd. Multi-room audio is a future iteration: deploy more snapclient
  instances per zone and they all sync against the same Snapserver.
 Tag: role::container-app, field::ziganka, category::audio, sound::player, x-display-name::Snapcast Client
+
+Package: ziganka-wyoming-piper-container
+Version: 2.2.2-1
+Architecture: all
+Maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
+Installed-Size: 47
+Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
+Filename: pool/main/ziganka-wyoming-piper-container_2.2.2-1_all.deb
+Size: 13334
+MD5sum: 81c93d4e3375d9d61668f34aa3245fce
+SHA1: 9ac408fd8429d2a3dd4fb504025eb081ed764221
+SHA256: e83c41402934a00804628b16dc67082a2d5e154e32dfb60384291b064e2ead43
+Section: sound
+Priority: optional
+Homepage: https://github.com/rhasspy/wyoming-piper
+Description: Local offline text-to-speech engine for Home Assistant
+ Wyoming Piper provides offline neural text-to-speech, exposed over the
+ Wyoming protocol on TCP port 10200. Home Assistant connects to it via
+ the built-in Wyoming integration and uses it for spoken alert
+ announcements through the saloon Fusion stereo (via Music Assistant).
+ .
+ Runs entirely locally so the boat does not need internet to announce
+ alerts. The configured voice model is downloaded from Hugging Face on
+ first start (one-time, ~60MB per voice) and cached in the container's
+ data volume.
+Tag: role::container-app, field::ziganka, category::automation, x-display-name::Wyoming Piper
 
