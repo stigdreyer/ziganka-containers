@@ -14,31 +14,33 @@
 # -----------------------------------------------------------------------------
 # Phase 1 scope (MVP)
 # -----------------------------------------------------------------------------
-#   - Poll signalk-alert-manager every 2 s for active alerts
+#   - Trigger on SignalK notifications via signalk-ha integration (push-based,
+#     no polling, no auth token required)
 #   - On new active alert: push to phone (always) + opportunistic Fusion TTS
 #   - Snapshot/restore Fusion state around alert playback
-#   - Acknowledge/silence buttons via push actions or Lovelace
+#   - Acknowledge/silence buttons via push actions
 #
 # Phase 2 (Shelly buzzer + Govee LEDs + mute switch) is NOT in this file.
 #
 # -----------------------------------------------------------------------------
 # Prerequisites on the HALPI2 (do these BEFORE restarting HA with this file)
 # -----------------------------------------------------------------------------
-#   1. ziganka-wyoming-piper-container installed and Wyoming integration
+#   1. signalk-ha custom integration installed (HACS) and configured, pointing
+#      at localhost:3000. Notifications enabled (default: notifications.*).
+#   2. ziganka-wyoming-piper-container installed and Wyoming integration
 #      added in HA Settings → Devices → Add Integration → Wyoming Protocol,
 #      pointing at host `localhost`, port `10200`.
-#   2. Music Assistant integration installed; at least one media_player.* entity
-#      exists for the saloon stereo path.
-#   3. HA Companion app installed on at least one phone, paired to HA.
+#   3. (Optional) HA Companion app installed on a phone for push notifications.
+#      Set input_text.ziganka_notify_target to your notify service.
 #   4. (Optional) chime files at /config/www/alerts/{emergency,alarm,warning}.mp3.
 #      The script gracefully skips chimes if files are missing.
 #
 # -----------------------------------------------------------------------------
 # CUSTOMIZE BEFORE FIRST USE
 # -----------------------------------------------------------------------------
-# Two values below have placeholders that you almost certainly need to change.
-# Both are exposed as input_text helpers — set them once from the HA UI
-# (Settings → Devices & Services → Helpers) instead of editing this file.
+# Set these helpers from HA UI (Settings → Devices & Services → Helpers):
+#   - input_text.ziganka_ma_player       → media_player.halos
+#   - input_text.ziganka_notify_target   → notify.mobile_app_<device> or notify.notify
 # =============================================================================
 
 
@@ -54,16 +56,13 @@ input_text:
   ziganka_ma_player:
     name: MA media_player entity_id
     max: 100
-    # CHANGE this to your actual MA media_player entity. Find it in
-    # Developer Tools → States → search "music_assistant".
-    initial: "media_player.music_assistant"
+    # Set to media_player.halos (Fusion stereo via signalk-ha)
+    initial: "media_player.halos"
 
   ziganka_notify_target:
     name: HA Companion notify service
     max: 100
-    # CHANGE this to your phone's notify service. Find it in Developer Tools
-    # → Services → search "notify". Typical: notify.mobile_app_<devicename>.
-    # Use "notify.notify" to broadcast to all devices.
+    # Set to notify.mobile_app_<devicename> or notify.notify to broadcast.
     initial: "notify.notify"
 
 input_number:
@@ -99,24 +98,10 @@ input_boolean:
 
 
 # -----------------------------------------------------------------------------
-# Sensors — alert list (command_line) + Fusion state (rest)
+# Sensors — Fusion state (REST)
 # -----------------------------------------------------------------------------
-# We use command_line for the alert list because HA's `rest` integration can't
-# expose a JSON-list-root response as attributes. Wrapping the list inside a
-# dict via shell ("{\"alerts\":...}") sidesteps that.
-command_line:
-  - sensor:
-      name: "SignalK Active Alerts"
-      unique_id: ziganka_active_alerts
-      command: >-
-        echo "{\"alerts\":$(curl -sS --max-time 3 'http://localhost:3000/plugins/signalk-alert-manager/alerts?state=active' 2>/dev/null || echo '[]')}"
-      scan_interval: 2
-      value_template: "{{ value_json.alerts | length }}"
-      json_attributes:
-        - alerts
-
-# Fusion device state — single REST hit, four template sensors derive each
-# field. Uses `json_attributes_path: "$"` because the response is a dict.
+# Alert data comes from signalk-ha (sensor.signalk_last_notification) — no
+# polling sensor needed here.
 rest:
   - resource: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1"
     scan_interval: 60
@@ -132,67 +117,10 @@ rest:
 
 
 # -----------------------------------------------------------------------------
-# Template sensors — derived alert + Fusion fields
+# Template sensors — Fusion fields
 # -----------------------------------------------------------------------------
 template:
   - sensor:
-      - name: "SignalK Top Alert Priority"
-        unique_id: ziganka_top_alert_priority
-        state: >-
-          {% set order = {'emergency': 4, 'alarm': 3, 'warning': 2, 'caution': 1} %}
-          {% set alerts = state_attr('sensor.signalk_active_alerts', 'alerts') or [] %}
-          {% if alerts | length == 0 %}
-            none
-          {% else %}
-            {% set ns = namespace(best=none, score=-1) %}
-            {% for a in alerts %}
-              {% set v = order.get(a.priority, 0) %}
-              {% if v > ns.score %}
-                {% set ns.score = v %}
-                {% set ns.best = a %}
-              {% endif %}
-            {% endfor %}
-            {{ ns.best.priority if ns.best else 'none' }}
-          {% endif %}
-
-      - name: "SignalK Top Alert Message"
-        unique_id: ziganka_top_alert_message
-        state: >-
-          {% set order = {'emergency': 4, 'alarm': 3, 'warning': 2, 'caution': 1} %}
-          {% set alerts = state_attr('sensor.signalk_active_alerts', 'alerts') or [] %}
-          {% if alerts | length == 0 %}
-            none
-          {% else %}
-            {% set ns = namespace(best=none, score=-1) %}
-            {% for a in alerts %}
-              {% set v = order.get(a.priority, 0) %}
-              {% if v > ns.score %}
-                {% set ns.score = v %}
-                {% set ns.best = a %}
-              {% endif %}
-            {% endfor %}
-            {{ (ns.best.message or ns.best.path or 'Unknown alert') if ns.best else 'none' }}
-          {% endif %}
-
-      - name: "SignalK Top Alert ID"
-        unique_id: ziganka_top_alert_id
-        state: >-
-          {% set order = {'emergency': 4, 'alarm': 3, 'warning': 2, 'caution': 1} %}
-          {% set alerts = state_attr('sensor.signalk_active_alerts', 'alerts') or [] %}
-          {% if alerts | length == 0 %}
-            none
-          {% else %}
-            {% set ns = namespace(best=none, score=-1) %}
-            {% for a in alerts %}
-              {% set v = order.get(a.priority, 0) %}
-              {% if v > ns.score %}
-                {% set ns.score = v %}
-                {% set ns.best = a %}
-              {% endif %}
-            {% endfor %}
-            {{ ns.best.id if ns.best else 'none' }}
-          {% endif %}
-
       - name: "Fusion Power"
         unique_id: ziganka_fusion_power
         state: >-
@@ -355,7 +283,6 @@ script:
               none
             {% endif %}
 
-      # Play chime if a file is configured for this priority
       - choose:
           - conditions: "{{ chime_url != 'none' }}"
             sequence:
@@ -368,16 +295,12 @@ script:
                 continue_on_error: true
               - wait_template: >-
                   {{ states(ma_player) in ['idle', 'off', 'paused'] }}
-                # Short timeout: typical chime is ~1s. If chime file is
-                # missing the play_media call fails silently and we just
-                # add 2s of dead air before TTS — not a deal-breaker.
                 timeout: "00:00:02"
                 continue_on_timeout: true
 
-      # Speak the alert message via Piper → MA
       - service: tts.speak
         data:
-          entity_id: tts.piper           # Adjust if your Piper TTS entity is named differently
+          entity_id: tts.piper
           media_player_entity_id: "{{ ma_player }}"
           message: "{{ priority | capitalize }}: {{ message }}"
           cache: false
@@ -393,17 +316,13 @@ script:
     max: 5
     fields:
       alert_id: { description: "SignalK alert id" }
-      priority: { description: "Alert priority" }
+      priority: { description: "Alert priority: emergency | alarm | warning | caution" }
       message: { description: "Alert message" }
     sequence:
       - service: input_boolean.turn_on
         target: { entity_id: input_boolean.ziganka_alert_active }
 
       # Channel A: phone push (always — Fusion-independent)
-      # Uses the dynamic-service pattern so input_text.ziganka_notify_target
-      # accepts either "notify.notify" (broadcast) or "notify.mobile_app_<dev>"
-      # (single device). The push.sound.critical/volume keys are iOS-only and
-      # ignored on Android — safe to leave in either way.
       - service: "{{ states('input_text.ziganka_notify_target') }}"
         data:
           title: "⚠ {{ priority | capitalize }}"
@@ -463,28 +382,36 @@ script:
 # -----------------------------------------------------------------------------
 automation:
 
-  - alias: "Ziganka: fire alert handler on new active alert"
+  - alias: "Ziganka: fire alert handler on new active notification"
     id: ziganka_alert_fire
     description: >
-      Triggers when a new top-priority active alert appears. The state of
-      sensor.signalk_top_alert_id changes whenever a new alert is raised
-      or an existing one is acknowledged/silenced/cleared.
+      Triggers when signalk-ha pushes a new notification via sensor.signalk_last_notification.
+      Maps signalk-ha state values (emergency/alarm/warn/alert) to internal priority levels.
+      Ignores normal/nominal clearance events.
     mode: queued
     max: 5
     trigger:
       - platform: state
-        entity_id: sensor.signalk_top_alert_id
+        entity_id: sensor.signalk_last_notification
     condition:
       - condition: template
-        value_template: "{{ trigger.to_state.state not in ['none', 'unknown', 'unavailable', ''] }}"
-      - condition: template
-        value_template: "{{ trigger.from_state.state != trigger.to_state.state }}"
+        value_template: >-
+          {{ trigger.to_state.attributes.get('state', 'normal')
+             not in ['normal', 'nominal', 'unknown', 'unavailable'] }}
     action:
+      - variables:
+          notif_state: "{{ trigger.to_state.attributes.get('state', 'normal') }}"
+          # Map signalk-ha state values to internal priority levels
+          priority: >-
+            {% set map = {'emergency': 'emergency', 'alarm': 'alarm', 'warn': 'warning', 'alert': 'caution'} %}
+            {{ map.get(notif_state, 'warning') }}
+          alert_id: "{{ trigger.to_state.attributes.get('id', 'unknown') }}"
+          message: "{{ trigger.to_state.attributes.get('message', 'Unknown alert') }}"
       - service: script.ziganka_alert_handle
         data:
-          alert_id: "{{ states('sensor.signalk_top_alert_id') }}"
-          priority: "{{ states('sensor.signalk_top_alert_priority') }}"
-          message: "{{ states('sensor.signalk_top_alert_message') }}"
+          alert_id: "{{ alert_id }}"
+          priority: "{{ priority }}"
+          message: "{{ message }}"
 
   - alias: "Ziganka: ack alert from phone push"
     id: ziganka_ack_from_push
@@ -520,33 +447,15 @@ automation:
 # cards:
 #   - type: glance
 #     entities:
-#       - sensor.signalk_active_alerts
-#       - sensor.signalk_top_alert_priority
+#       - sensor.signalk_notification_count
+#       - sensor.signalk_last_notification
 #       - binary_sensor.fusion_reachable
 #   - type: entities
-#     title: Top alert
+#     title: Last notification
 #     entities:
-#       - sensor.signalk_top_alert_priority
-#       - sensor.signalk_top_alert_message
-#       - sensor.signalk_top_alert_id
+#       - sensor.signalk_last_notification
 #   - type: horizontal-stack
 #     cards:
-#       - type: button
-#         tap_action:
-#           action: call-service
-#           service: rest_command.signalk_acknowledge_alert
-#           data:
-#             alert_id: "{{ states('sensor.signalk_top_alert_id') }}"
-#         name: Acknowledge
-#         icon: mdi:check
-#       - type: button
-#         tap_action:
-#           action: call-service
-#           service: rest_command.signalk_silence_alert
-#           data:
-#             alert_id: "{{ states('sensor.signalk_top_alert_id') }}"
-#         name: Silence
-#         icon: mdi:bell-off
 #       - type: button
 #         tap_action:
 #           action: call-service
