@@ -4,12 +4,13 @@ groups:
     label: General Settings
     fields:
       - id: MAYARA_ARGS
-        label: Extra Command Arguments
+        label: Command Arguments
         type: string
-        default: ""
+        default: "--brand navico --interface eth0 -n ws:127.0.0.1:3000 --pass-ais"
         required: false
         description: >
-          Additional command-line flags passed to mayara-server.
+          Command-line flags passed to mayara-server.
+          Use "--brand <name>" (navico, raymarine, furuno, garmin, koden) to
+          restrict discovery to a specific radar brand, and "--interface <iface>"
+          to bind to a specific network interface.
           Use "--emulator" to run without physical radar hardware.
-          Use "--navico", "--raymarine", "--furuno", "--garmin", or "--koden"
-          to restrict discovery to a specific radar brand.

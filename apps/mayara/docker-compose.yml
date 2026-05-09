@@ -10,10 +10,19 @@ services:
       options:
         tag: "{{.Name}}"
     environment:
-      - MAYARA_ARGS=${MAYARA_ARGS:-}
+      - MAYARA_ARGS=${MAYARA_ARGS:---brand navico --interface eth0 -n ws:127.0.0.1:3000 --pass-ais}
     # $$MAYARA_ARGS: $$ is docker-compose escaping — the container shell sees
     # $MAYARA_ARGS and expands it from the environment set above.
     command: sh -c "exec mayara-server $$MAYARA_ARGS"
+    volumes:
+      - ${CONTAINER_DATA_ROOT}/config:/home/mayara/.config/mayara
+      - ${CONTAINER_DATA_ROOT}/recordings:/home/mayara/.local/share/mayara/recordings
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:6502/signalk/v2/api/vessels/self/radars"]
       interval: 30s
