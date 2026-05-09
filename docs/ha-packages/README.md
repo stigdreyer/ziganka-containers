@@ -72,7 +72,7 @@ Watch the log on first boot for parse errors. Common ones:
 
 Once HA boots cleanly, go to **Settings → Devices & Services → Helpers** and set:
 
-- `input_text.ziganka_ma_player` → your MA `media_player.*` entity_id
+- `input_text.ziganka_ma_player` → `media_player.halos` (the Fusion stereo media player exposed by the SignalK HA integration)
 - `input_text.ziganka_notify_target` → your notify service (`notify.mobile_app_<device>` for one phone, or `notify.notify` to broadcast)
 - `input_number.ziganka_vol_*` → adjust if defaults (20/18/14) feel wrong
 
