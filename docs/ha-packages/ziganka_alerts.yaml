@@ -282,27 +282,14 @@ script:
         target:
           entity_id: input_text.fusion_pre_alert_state
         data:
-          value: >-
-            {{
-              {
-                'power': states('sensor.fusion_power'),
-                'source': states('sensor.fusion_source'),
-                'muted': states('sensor.fusion_muted'),
-                'volume': states('sensor.fusion_volume') | int(0)
-              } | to_json
-            }}
+          value: "{{ {'power': states('sensor.fusion_power'), 'source': states('sensor.fusion_source'), 'muted': states('sensor.fusion_muted'), 'volume': states('sensor.fusion_volume') | int(0)} | to_json }}"
 
   ziganka_alert_restore_fusion:
     alias: "Ziganka: restore Fusion state"
     sequence:
       - variables:
           raw: "{{ states('input_text.fusion_pre_alert_state') }}"
-          snap: >-
-            {% if raw not in ['', 'unknown', 'unavailable'] %}
-              {{ raw | from_json }}
-            {% else %}
-              {{ {} }}
-            {% endif %}
+          snap: "{{ raw | trim | from_json({}) if raw | trim not in ['', 'unknown', 'unavailable'] else {} }}"
       - choose:
           - conditions: "{{ snap | length > 0 }}"
             sequence:
@@ -311,7 +298,7 @@ script:
                   value: "{{ snap.volume | int(8) }}"
               - service: rest_command.fusion_set_source
                 data:
-                  value: "{{ snap.source if snap.source not in ['unknown','unavailable','none'] else 'aux1' }}"
+                  value: "{{ snap.source if snap.source not in ['unknown','unavailable','none'] else 'source2' }}"
               - service: rest_command.fusion_set_muted
                 data:
                   value: "{{ 'true' if snap.muted in [true, 'true', 'True', 'on'] else 'false' }}"
@@ -343,7 +330,7 @@ script:
       - service: rest_command.fusion_set_power
         data: { value: "on" }
       - service: rest_command.fusion_set_source
-        data: { value: "aux1" }   # Change if your Fusion AUX is on a different source ID
+        data: { value: "source2" }   # AUX = source2 on this Fusion
       - service: rest_command.fusion_set_muted
         data: { value: "false" }
       - service: rest_command.fusion_set_volume
