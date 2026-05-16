@@ -1,23 +1,4 @@
 services:
-  network-check:
-    image: busybox
-    container_name: ma-network-check
-    restart: unless-stopped
-    volumes:
-      - ./assets/wait-for-internet.sh:/wait-for-internet.sh:ro
-    entrypoint: ["/bin/sh", "/wait-for-internet.sh"]
-    # Becomes healthy once /tmp/ready is touched (internet up or timeout reached).
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f /tmp/ready ]"]
-      interval: 5s
-      timeout: 3s
-      start_period: 0s
-      retries: 1
-    logging:
-      driver: journald
-      options:
-        tag: "{{.Name}}"
-
   music-assistant:
     image: ghcr.io/music-assistant/server:2.8.7
     container_name: music-assistant
@@ -55,3 +36,22 @@ services:
       timeout: 10s
       start_period: 60s
       retries: 5
+
+  network-check:
+    image: busybox
+    container_name: ma-network-check
+    restart: unless-stopped
+    volumes:
+      - ./assets/wait-for-internet.sh:/wait-for-internet.sh:ro
+    entrypoint: ["/bin/sh", "/wait-for-internet.sh"]
+    # Becomes healthy once /tmp/ready is touched (internet up or timeout reached).
+    healthcheck:
+      test: ["CMD-SHELL", "[ -f /tmp/ready ]"]
+      interval: 5s
+      timeout: 3s
+      start_period: 0s
+      retries: 1
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
