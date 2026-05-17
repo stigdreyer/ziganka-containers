@@ -17,7 +17,7 @@ jobs:
   check-snapclient:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Check for new Snapclient release
         id: check
@@ -25,6 +25,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           LATEST=$(gh api repos/badaix/snapcast/releases/latest --jq '.tag_name' | sed 's/^v//')
+          if ! echo "$LATEST" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+            echo "ERROR: Unexpected version format from API: '$LATEST'" && exit 1
+          fi
           CURRENT=$(grep '^upstream_version:' apps/snapclient/metadata.yaml | awk '{print $2}')
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
@@ -39,10 +42,10 @@ jobs:
         run: |
           LATEST="${{ steps.check.outputs.latest }}"
           CURRENT="${{ steps.check.outputs.current }}"
-          sed -i -E "s/^version: ${CURRENT}-[0-9]+/version: ${LATEST}-1/" apps/snapclient/metadata.yaml
-          sed -i "s/^upstream_version: ${CURRENT}/upstream_version: ${LATEST}/" apps/snapclient/metadata.yaml
-          sed -i "s/SNAPCLIENT_VERSION: \"${CURRENT}\"/SNAPCLIENT_VERSION: \"${LATEST}\"/" apps/snapclient/docker-compose.yml
-          sed -i "s/ARG SNAPCLIENT_VERSION=${CURRENT}/ARG SNAPCLIENT_VERSION=${LATEST}/" apps/snapclient/assets/Dockerfile
+          sed -i -E "s|^version: ${CURRENT}-[0-9]+|version: ${LATEST}-1|" apps/snapclient/metadata.yaml
+          sed -i "s|^upstream_version: ${CURRENT}|upstream_version: ${LATEST}|" apps/snapclient/metadata.yaml
+          sed -i "s|SNAPCLIENT_VERSION: \"${CURRENT}\"|SNAPCLIENT_VERSION: \"${LATEST}\"|" apps/snapclient/docker-compose.yml
+          sed -i "s|ARG SNAPCLIENT_VERSION=${CURRENT}|ARG SNAPCLIENT_VERSION=${LATEST}|" apps/snapclient/assets/Dockerfile
 
       - name: Open pull request
         if: steps.check.outputs.has_update == 'true'
