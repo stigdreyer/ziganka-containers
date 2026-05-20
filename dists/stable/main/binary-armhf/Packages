@@ -34,9 +34,9 @@ Conflicts: boat-homeassistant-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-homeassistant-container_2026.5.0-17_all.deb
 Size: 11548
-MD5sum: 77f2ac2a71891412a6edbdbdf2deaa2b
-SHA1: 9094115214c394ef30c98111e46b6d291ea9bd0c
-SHA256: 514668d4af5a82eea6ddb913068d187e46b9db7eeecffd5c60ad697ff54da546
+MD5sum: b15c073fff3b0a707e732e8095286889
+SHA1: 4b900e21d3734fd3780aff5d868b44a7137be645
+SHA256: ebae6815aedc3409c5389e34f7d1e52589e9a4face618c2cfeeed85461e78de2
 Section: web
 Priority: optional
 Homepage: https://www.home-assistant.io/
@@ -62,10 +62,10 @@ Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-c
 Conflicts: boat-mayara-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-mayara-container_3.5.1-7_all.deb
-Size: 16332
-MD5sum: 38eddeae98be6475f4e04aaecac497fc
-SHA1: 07f0575b2d55ab5bea803c1de6d34e5f2eeab3e5
-SHA256: e6024aa47058999be1d0319b07cfb09e634ba98f85c97ad1b2ae81650146c63c
+Size: 16334
+MD5sum: 17a479470a1c885ee97a4c527af6b43f
+SHA1: c671f82395df1dcc13286e969e90833dc9f36cda
+SHA256: a80010afb986b01ddcbec8ee4d3968bc9d72aeef5834c71cd1f214369b868b56
 Section: web
 Priority: optional
 Homepage: https://github.com/MarineYachtRadar/mayara-server
@@ -84,18 +84,18 @@ Description: Marine radar display and ARPA tracking server
 Tag: role::container-app, field::ziganka, category::navigation, interface::web, use::monitoring, x-display-name::Mayara Radar Server
 
 Package: ziganka-music-assistant-container
-Version: 2.8.7-17
+Version: 2.8.7-18
 Architecture: all
 Maintainer: Stig Dreyer <stig.dreyer@busy-brain.de>
-Installed-Size: 61
+Installed-Size: 62
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Conflicts: boat-music-assistant-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
-Filename: pool/main/ziganka-music-assistant-container_2.8.7-17_all.deb
-Size: 17920
-MD5sum: e46facc1959ac9595054659bb3e2b86f
-SHA1: d031d2fb8552939c2fdb9df4090e052126f49fdd
-SHA256: 919c58c95643b6bfaa272798a5fe2523b0e21352deebb7d1cb056bee13ac76ff
+Filename: pool/main/ziganka-music-assistant-container_2.8.7-18_all.deb
+Size: 18376
+MD5sum: 3a1b5ce3a0f81fccbb3531e31983ccb1
+SHA1: 265c9bfefc89aff25102d61cae958ba8d83e5d31
+SHA256: 607cfacd8f3fa3276d52ff0debcdc75cd9c8e5b059c4a3f8d83fd6b002f0b409
 Section: sound
 Priority: optional
 Homepage: https://www.music-assistant.io/
@@ -122,10 +122,10 @@ Installed-Size: 55
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10), ziganka-music-assistant-container
 Conflicts: boat-snapclient-container
 Filename: pool/main/ziganka-snapclient-container_0.35.0-18_all.deb
-Size: 13276
-MD5sum: 5d3872cf8edea8f814e7ac743bc5b926
-SHA1: 0452d650b201dc1130159ed24a0a4a4344b15b2c
-SHA256: bf7240c25052eb5d8573ab7c7f654c44f0806765410d3889f906841aaa23d429
+Size: 13280
+MD5sum: f8f788c536ed81abcb082dd741a989c8
+SHA1: f55db196294fdf75d72dd803e20bbb77b33f9ed1
+SHA256: 24aeca038cff041c545cdb9f5195bbe4ee558caade3458d5bc2ba6209a730a93
 Section: sound
 Priority: optional
 Homepage: https://github.com/badaix/snapcast
@@ -144,10 +144,10 @@ Maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
 Installed-Size: 47
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Filename: pool/main/ziganka-wyoming-piper-container_2.2.2-1_all.deb
-Size: 13338
-MD5sum: 06821ea9b277bb86c4412a9a43fa9c62
-SHA1: 15161346cef24d0124faa7ea97497e2ca73d804e
-SHA256: 6a06f4a4ae9aeae01316880b67dd7ec24b7bdc5b0e3eb9ad32c660b027b25ff3
+Size: 13334
+MD5sum: 8a0a659fe722e032ba5e7d14c08818fb
+SHA1: abdb792d38ed0d21cbc2554e7c10cfc22a78c98c
+SHA256: cb653af2f2386ce6e58319e2b6b3cbb11642c3bd2437b76e88f2d98beb9815f9
 Section: sound
 Priority: optional
 Homepage: https://github.com/rhasspy/wyoming-piper
