@@ -6,6 +6,12 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     install -s -m755 /src/mdns-repeater /usr/local/bin/mdns-repeater
 
 FROM debian:trixie-slim
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+        iproute2 && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/bin/mdns-repeater /usr/local/bin/mdns-repeater
-# Bridge name br-ma is set via driver_opts in docker-compose networks section.
-ENTRYPOINT ["/usr/local/bin/mdns-repeater", "-f", "br-ma", "eth0"]
+COPY entrypoint-mdns.sh /usr/local/bin/entrypoint-mdns.sh
+RUN chmod +x /usr/local/bin/entrypoint-mdns.sh
+# Auto-discovers all Docker bridge interfaces at startup so mDNS is reflected
+# regardless of which bridge the MA container's librespot uses.
+ENTRYPOINT ["/usr/local/bin/entrypoint-mdns.sh"]
