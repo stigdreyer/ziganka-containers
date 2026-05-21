@@ -16,7 +16,8 @@ RUN git init -q . \
  && git fetch --depth 1 origin "$ONA_PLOTTER_SHA" \
  && git checkout -q FETCH_HEAD
 
-RUN dotnet publish -c Release OnaPlotter/OnaPlotter.csproj -o /publish
+RUN dotnet workload restore OnaPlotter/OnaPlotter.csproj \
+ && dotnet publish -c Release OnaPlotter/OnaPlotter.csproj -o /publish
 
 FROM nginx:1.27-alpine
 RUN apk add --no-cache gettext wget
