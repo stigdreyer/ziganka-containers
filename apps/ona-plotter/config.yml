@@ -1,0 +1,24 @@
+version: "1.0"
+
+groups:
+  - id: general
+    label: General Settings
+    fields:
+      - id: SIGNALK_URL
+        label: SignalK Server URL
+        type: string
+        default: "http://halos.local:3000"
+        required: true
+        description: >
+          URL the browser uses to reach the SignalK server. Must be
+          reachable from every device that opens OnaPlotter (helm
+          screen, phone, iPad). Use the HALPI2's mDNS name or LAN IP —
+          "localhost" will not work from a phone.
+      - id: APP_PORT
+        label: Web UI Port
+        type: string
+        default: "8090"
+        required: true
+        description: >
+          Host port the plotter UI listens on. Change only if 8090
+          conflicts with another service.

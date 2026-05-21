@@ -1,0 +1,70 @@
+name: Build OnaPlotter Image
+
+# Builds the OnaPlotter container image from a pinned upstream SHA and
+# publishes it to GHCR. Triggered manually, or automatically when the
+# build context changes. Upstream has no release tags so the SHA is
+# the source of truth; bump ONA_PLOTTER_SHA below to upgrade.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/ona-plotter/**'
+      - '.github/workflows/build-ona-plotter-image.yml'
+  workflow_dispatch:
+    inputs:
+      ona_plotter_sha:
+        description: "Upstream msallin/ona-plotter commit SHA to build (overrides default)"
+        required: false
+        type: string
+
+env:
+  # Pinned upstream commit. Bump this and push to rebuild.
+  ONA_PLOTTER_SHA: 347afb422424647db6374b67c33eab6e681b5c27
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ona-plotter
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Resolve build SHA
+        id: sha
+        run: |
+          sha="${{ github.event.inputs.ona_plotter_sha }}"
+          if [ -z "$sha" ]; then
+            sha="$ONA_PLOTTER_SHA"
+          fi
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{7,40}$'; then
+            echo "::error::ONA_PLOTTER_SHA must be a hex commit SHA, got: $sha"
+            exit 1
+          fi
+          short="$(printf '%s' "$sha" | cut -c1-7)"
+          echo "full=$sha"   >> "$GITHUB_OUTPUT"
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: docker/ona-plotter
+          platforms: linux/arm64,linux/amd64
+          push: true
+          build-args: |
+            ONA_PLOTTER_SHA=${{ steps.sha.outputs.full }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.sha.outputs.short }}
+            ${{ env.IMAGE }}:latest
+          provenance: false

@@ -1,0 +1,36 @@
+services:
+  ona-plotter:
+    image: ghcr.io/stigdreyer/ona-plotter:347afb4
+    container_name: ona-plotter
+    init: true
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+    environment:
+      - SIGNALK_URL=${SIGNALK_URL:-http://halos.local:3000}
+      - APP_PORT=${APP_PORT:-8090}
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:${APP_PORT:-8090}/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 5
+    # Host networking matches other Ziganka apps. The browser is the
+    # only client; the container itself has no peer dependency on
+    # SignalK. Image is built from a pinned upstream SHA by the
+    # build-ona-plotter-image workflow and published to ghcr.io.

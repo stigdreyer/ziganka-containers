@@ -1,0 +1,55 @@
+name: OnaPlotter
+app_id: ona-plotter
+version: 0.0.0+git20260520.347afb4-1
+upstream_version: 0.0.0+git20260520.347afb4
+description: Touch-first SignalK chartplotter
+long_description: |
+  OnaPlotter is a touch-first chart plotter that consumes a SignalK
+  feed. One responsive app for the helm touchscreen, an iPad in the
+  cockpit, or a phone in a jacket pocket — same data, WCAG-sized tap
+  targets, full keyboard parity.
+
+  Features:
+  - Chart view with AIS targets, CPA/TCPA danger pulse, ARPA from Mayara
+  - Anchor watch (drop + set radius) with optional tide-aware grounding alarm
+  - MOB, SART, EPIRB markers; stacked alarm banner driven by SignalK notifications
+  - Route + waypoint editing, GPX import/export, regions and notes
+  - Dashboard, Gauges, SailSteer, Wind Rose, History replay, passage Stats
+  - Cruise / Race mode preset with polar-driven target boat speed
+  - Plugin-aware: anchor-alarm, tides, buddy list, Mayara radar, flags
+
+  Built on Blazor WebAssembly + Leaflet. Served as static files; talks
+  directly to your SignalK server from the browser.
+
+homepage: https://github.com/msallin/ona-plotter
+maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
+license: Unknown
+tags:
+  - role::container-app
+  - field::ziganka
+  - category::navigation
+  - interface::web
+  - use::monitoring
+debian_section: web
+architecture: all
+depends:
+  - docker.io (>= 20.10) | docker-ce (>= 20.10)
+web_ui:
+  enabled: true
+  path: /
+  port: 8090
+  protocol: http
+  visible: true
+routing:
+  host_port: 8090
+  auth:
+    mode: none
+layout:
+  priority: 55
+  width: 2
+  height: 2
+default_config:
+  # URL the browser uses to reach SignalK. Must be reachable from every
+  # device that opens the plotter (helm, phone, iPad) — not localhost.
+  SIGNALK_URL: "http://halos.local:3000"
+  APP_PORT: "8090"
