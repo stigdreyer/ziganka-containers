@@ -13,9 +13,8 @@ Produces Debian `.deb` packages installable via APT on the HALPI2. Each package 
 | Home Assistant | 8123 | bridge (Traefik) | `ghcr.io/home-assistant/home-assistant` |
 | Music Assistant | 8095 | bridge (Traefik) | `ghcr.io/music-assistant/server` |
 | Snapcast Client | — | host | custom Dockerfile (GitHub releases) |
-| Mayara Radar | 6502 | host | `ghcr.io/marineyachtradar/mayara-server` |
 
-Host networking apps (Snapclient, Mayara) are accessed directly on the HALPI2's IP. Bridge apps are proxied via Traefik and accessible through HaLOS's reverse proxy.
+Host networking apps (Snapclient) are accessed directly on the HALPI2's IP. Bridge apps are proxied via Traefik and accessible through HaLOS's reverse proxy.
 
 ## Repo layout
 
@@ -34,7 +33,7 @@ tools/
 .github/workflows/
   build.yml            # CI: build on PR/push; publish apt repo on main push
   release.yml          # tag push: create GitHub Release with .deb files
-  check-updates.yml    # daily: PR for new HA/MA/Mayara image versions
+  check-updates.yml    # daily: PR for new HA/MA image versions
   check-snapclient-updates.yml  # daily: PR for new Snapcast releases
 ```
 

@@ -8,7 +8,6 @@ Apps included:
 - **Music Assistant** — streaming (Spotify, internet radio) and local library,
   with Snapcast for multi-room audio
 - **Snapcast Client** — Snapcast client playing audio out the HDMI port
-- **Mayara** — marine radar display with ARPA tracking and AIS overlay
 - **OnaPlotter** — touch-first SignalK chartplotter (AIS, CPA/TCPA, anchor watch, route editing)
 
 Built with the
@@ -24,7 +23,6 @@ Halpi2/
 │   ├── homeassistant/         # Home Assistant Core
 │   ├── music-assistant/       # Music Assistant (incl. bundled Snapserver)
 │   ├── snapclient/            # Snapcast client → HDMI audio
-│   ├── mayara/                # Mayara radar server
 │   └── ona-plotter/           # OnaPlotter SignalK chartplotter
 ├── docker/
 │   └── ona-plotter/           # CI image build context for OnaPlotter
@@ -53,7 +51,7 @@ Then install or upgrade apps with standard apt:
 ```bash
 sudo apt install ziganka-container-store ziganka-homeassistant-container \
   ziganka-music-assistant-container ziganka-snapclient-container \
-  ziganka-mayara-container ziganka-ona-plotter-container
+  ziganka-ona-plotter-container
 ```
 
 Future updates: `sudo apt update && sudo apt upgrade`

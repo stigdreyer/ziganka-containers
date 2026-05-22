@@ -3,8 +3,8 @@ name: Ziganka
 description: |
   Custom container app store for the sailing vessel Ziganka, running on a
   HALPI2 computer. Home Assistant for automation, Music Assistant for
-  streaming and local library, Snapcast for HDMI audio, and Mayara for
-  marine radar display and ARPA tracking.
+  streaming and local library, Snapcast for HDMI audio, and OnaPlotter for
+  marine navigation.
 
 icon: /usr/share/container-stores/ziganka/icon.svg
 
