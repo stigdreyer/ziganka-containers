@@ -1,6 +1,6 @@
 services:
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2023.3.6
+    image: ghcr.io/home-assistant/home-assistant:2026.5.0
     container_name: homeassistant
     init: false
     network_mode: host
