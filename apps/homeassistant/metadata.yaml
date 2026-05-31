@@ -1,7 +1,7 @@
 name: Home Assistant
 app_id: homeassistant
-version: 2026.5.0-1
-upstream_version: 2026.5.0
+version: 2023.3.6-1
+upstream_version: 2023.3.6
 description: Open-source home automation platform
 long_description: |
   Home Assistant is the central automation hub for the boat. It controls
