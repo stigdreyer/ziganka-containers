@@ -4,6 +4,13 @@ services:
     container_name: homeassistant
     init: false
     network_mode: host
+    # Resolve the HaLOS domain to the loopback Traefik listener so server-side
+    # calls from inside the container (e.g. hass-oidc-auth fetching Authelia's
+    # OIDC discovery/token endpoints at https://${HALOS_DOMAIN}/sso) succeed —
+    # the container's resolver does not do mDNS, so ".local" names otherwise
+    # fail with "Domain name not found". HALOS_DOMAIN is provided by prestart.sh.
+    extra_hosts:
+      - "${HALOS_DOMAIN}:127.0.0.1"
     cap_add:
       - NET_ADMIN
       - NET_RAW

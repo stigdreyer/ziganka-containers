@@ -2,101 +2,97 @@
 
 Home Assistant on the HALPI2 uses `routing.auth.mode: none` — it is **not**
 gated by Traefik forward-auth. HA already requires its own login on every door
-(native `:8123` and the proxied `:4433`), so a forward-auth layer would be
-redundant, wouldn't cover `:8123`, and is known to break the Companion app,
-WebSocket, long-lived tokens, and `/api/`.
+(native `:8123` and the proxied per-app HTTPS port), so a forward-auth layer
+would be redundant, wouldn't cover `:8123`, and is known to break the Companion
+app, WebSocket, long-lived tokens, and `/api/`.
 
-To get real single sign-on (one Authelia identity instead of separate HA
-passwords), add the **[`hass-oidc-auth`](https://github.com/christiaangoossens/hass-oidc-auth)**
-HACS integration as an OIDC client against Authelia. This is an **outbound**
-OIDC flow from HA, so it works fine under host networking — the callback
-resolves through the `/homeassistant/` → `:4433` path redirect that HaLOS
-generates from the package's `routing.d` declaration.
+For real single sign-on (one Authelia identity instead of separate HA
+passwords), add the
+**[`hass-oidc-auth`](https://github.com/christiaangoossens/hass-oidc-auth)**
+HACS integration as an OIDC client against Authelia.
 
-This is an app-config/HACS change on the device, **not** a `.deb` change — it
-lives here in `docs/`, not in `apps/homeassistant/`.
+## What the package automates for you
 
-## Prerequisites
+`ziganka-homeassistant-container`'s `prestart.sh` registers the Authelia side
+automatically on every (re)start — so this is **portable across boats** and you
+never hand-manage secrets or redirect URIs:
 
-- HACS installed in Home Assistant.
-- Authelia running on HaLOS (it is, by default).
-- The HALPI2 domain, referred to below as `${HALOS_DOMAIN}` (e.g. `halos.local`).
+- Generates a client secret once at
+  `/var/lib/container-apps/ziganka-homeassistant-container/data/oidc-secret`.
+- Writes `/etc/halos/oidc-clients.d/homeassistant.yml` (HaLOS merges + hashes it
+  into Authelia), with the redirect URI derived from `HALOS_DOMAIN` and HA's
+  per-app port from `/etc/halos/port-registry` — e.g.
+  `https://halos.local:4433/auth/oidc/callback`.
+- Seeds `oidc_client_secret` into HA's `secrets.yaml` so the config block below
+  can use `!secret oidc_client_secret` with nothing to copy by hand.
 
-## 1. Register the Authelia OIDC client
+The container's compose also maps `${HALOS_DOMAIN}` to `127.0.0.1`
+(`extra_hosts`) so HA's **server-side** calls to `https://halos.local/sso/...`
+resolve — the container's resolver does not do mDNS, and without this the OIDC
+callback fails with a 500 (`Cannot connect to host ... Domain name not found`).
 
-HaLOS merges per-app client snippets from `/etc/halos/oidc-clients.d/*.yml`
-into Authelia's config (the same mechanism Signal K and Homarr use). Create
-`/etc/halos/oidc-clients.d/homeassistant.yml` on the HALPI2:
+## What you still do by hand (two steps)
+
+A host prestart can't reach into HA's runtime, so these stay manual:
+
+### 1. Install the HACS integration
+
+In HA → HACS → custom repository
+`https://github.com/christiaangoossens/hass-oidc-auth` (type: Integration) →
+install **OpenID Connect (OIDC) Authentication**, then restart HA.
+
+### 2. Add the `auth_oidc:` block to `configuration.yaml`
 
 ```yaml
-# Home Assistant OIDC client for Authelia SSO
-client_id: homeassistant
-client_name: Home Assistant
-# Generate the secret once on the device:
-#   openssl rand -hex 32 | sudo tee /var/lib/container-apps/ziganka-homeassistant-container/data/oidc-secret
-#   sudo chmod 600 /var/lib/container-apps/ziganka-homeassistant-container/data/oidc-secret
-client_secret_file: /var/lib/container-apps/ziganka-homeassistant-container/data/oidc-secret
-redirect_uris:
-  # hass-oidc-auth's callback. The /homeassistant/ path 302-redirects to the
-  # per-app TLS port (:4433), so the callback reaches HA.
-  - 'https://${HALOS_DOMAIN}/homeassistant/auth/oidc/callback'
-scopes: [openid, profile, email, groups]
-consent_mode: implicit
-token_endpoint_auth_method: client_secret_post
+auth_oidc:
+  client_id: homeassistant
+  client_secret: !secret oidc_client_secret   # seeded by prestart.sh
+  discovery_url: "https://halos.local/sso/.well-known/openid-configuration"
+  display_name: "HaLOS SSO"
+  features:
+    automatic_user_linking: true   # link to an existing HA user by username
+    force_https: true              # build https callback behind the TLS proxy
+  network:
+    tls_verify: false              # HaLOS uses a self-signed CA
+  roles:
+    admin: "admins"                # Authelia group → HA admin
 ```
 
-Generate the secret and apply (Authelia's prestart re-merges snippets on
-restart of the HaLOS core stack):
-
-```bash
-sudo openssl rand -hex 32 \
-  | sudo tee /var/lib/container-apps/ziganka-homeassistant-container/data/oidc-secret >/dev/null
-sudo chmod 600 /var/lib/container-apps/ziganka-homeassistant-container/data/oidc-secret
-# Restart the core stack so Authelia picks up the new client.
-sudo systemctl restart halos-core-containers-container
-```
-
-## 2. Install and configure hass-oidc-auth
-
-1. In HA → HACS → add the custom repository
-   `https://github.com/christiaangoossens/hass-oidc-auth` (category:
-   Integration), then install **OpenID Connect (OIDC) Authentication**.
-2. Add the integration's config to `configuration.yaml` (see the project's
-   README for the current schema). Roughly:
-
-   ```yaml
-   auth_oidc:
-     client_id: homeassistant
-     client_secret: !secret oidc_client_secret
-     discovery_url: "https://${HALOS_DOMAIN}/sso/.well-known/openid-configuration"
-     # Map Authelia groups to HA admin (matches the groups Authelia sends)
-     roles:
-       admin: "admins"
-   ```
-
-   Put the secret in `secrets.yaml`:
-
-   ```yaml
-   oidc_client_secret: "<contents of the oidc-secret file from step 1>"
-   ```
-
-3. Restart Home Assistant. The login screen gains a "Sign in with HaLOS SSO"
-   option (alongside HA's local login, which stays available as a fallback).
+This is a **confidential** client (matches the proven HaLOS pattern used by
+Signal K / Homarr; HaLOS hashes the secret into Authelia). Restart HA after
+adding it.
 
 ## Verify
 
-- Browse to `https://${HALOS_DOMAIN}/homeassistant/` → choose the SSO option →
-  authenticate at Authelia → land back in HA, logged in.
-- HA's own local accounts still work as an emergency fallback.
+- Open HA **through the HTTPS door** — the dashboard card / `https://halos.local/homeassistant/`
+  (which 302-redirects to the per-app port), **not** `http://halos.local:8123`.
+  The callback is registered on the HTTPS per-app port, so the flow must start
+  there.
+- Choose **"HaLOS SSO"** on the login screen → authenticate at Authelia → land
+  back in HA. A user in the Authelia `admins` group gets HA admin.
+- HA's local accounts still work as a fallback.
 
-## Notes / gotchas
+Confirm the Authelia client merged:
 
-- **Companion app:** point the mobile app at the native `http://${HALOS_DOMAIN}:8123`.
-  The SSO option appears in its login flow too (newer app versions support the
-  external auth provider); local login remains the fallback.
-- **Don't add Traefik forward-auth in front of HA** to "double up" — it breaks
-  the API/WebSocket and is redundant with HA's own login. Keep
+```bash
+sudo sed -n '/client_id: homeassistant/,/token_endpoint_auth_method/p' \
+  /var/lib/container-apps/halos-core-containers/data/authelia/oidc-clients.yml
+```
+
+## Troubleshooting
+
+- **500 on callback, log shows `Domain name not found` for `halos.local`** —
+  the `extra_hosts` mapping is missing/not applied. Confirm the container
+  resolves it: `sudo docker exec homeassistant getent hosts halos.local`
+  (should be `127.0.0.1`). Reinstall/upgrade the package or restart the service.
+- **`redirect_uri` rejected by Authelia** — the URI HA sent doesn't match the
+  registered one. The error page shows the URI HA used; make sure it equals the
+  `redirect_uris` entry in `/etc/halos/oidc-clients.d/homeassistant.yml`
+  (host + per-app port + `/auth/oidc/callback`). Adjust the snippet and
+  `sudo systemctl restart halos-core-containers.service`.
+- **TLS errors fetching discovery** — ensure `network.tls_verify: false` (HaLOS
+  CA is self-signed), or mount the CA and set `network.tls_ca_path`.
+- **Logged in but no admin** — confirm your Authelia user is in the `admins`
+  group (`users_database.yml`) and `roles.admin` matches that group name.
+- **Don't** put Traefik forward-auth in front of HA to "double up" — keep
   `routing.auth.mode: none`.
-- If the callback fails, confirm the redirect URI in the Authelia client
-  snippet exactly matches what `hass-oidc-auth` requests, and that
-  `https://${HALOS_DOMAIN}/homeassistant/` 302-redirects to `:4433`.
