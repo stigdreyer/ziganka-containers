@@ -3,7 +3,7 @@
   "trustProxy": true,
   "pipedProviders": [
     {
-      "id": "gpsd",
+      "id": "halpi2-gpsd",
       "enabled": true,
       "pipeElements": [
         {
@@ -15,6 +15,43 @@
               "type": "gpsd",
               "host": "localhost",
               "port": "2947"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "halpi2-rs485",
+      "enabled": true,
+      "pipeElements": [
+        {
+          "type": "providers/simple",
+          "options": {
+            "logging": false,
+            "type": "NMEA0183",
+            "subOptions": {
+              "type": "serial",
+              "device": "/dev/ttyAMA4",
+              "baudrate": 4800,
+              "toStdout": "nmea0183out"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "halpi2-nmea2000",
+      "enabled": true,
+      "pipeElements": [
+        {
+          "type": "providers/simple",
+          "options": {
+            "logging": false,
+            "type": "NMEA2000",
+            "subOptions": {
+              "type": "canbus-canboatjs",
+              "interface": "can0",
+              "uniqueNumber": 1020971
             }
           }
         }
