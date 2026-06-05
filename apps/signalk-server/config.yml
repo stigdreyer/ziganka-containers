@@ -1,3 +1,19 @@
 version: "1.0"
 
-groups: []
+groups:
+  - id: container
+    label: Container Image
+    fields:
+      - id: SIGNALK_IMAGE
+        label: Container image
+        type: string
+        default: "ghcr.io/dirkwa/signalk-server:dirkwa"
+        required: true
+        description: >
+          Docker image used for the Signal K container. Defaults to dirkwa's
+          Signal K fork on a rolling tag. Change this to run a different build
+          (e.g. the official signalk/signalk-server, a beta tag, or your own
+          image) without editing the package. Saving a new value restarts the
+          service, which pulls the new image and recreates the container. Use
+          a Signal K Server-compatible image — an unrelated or mistyped image
+          will fail to start (check the container logs in Cockpit).

@@ -137,8 +137,11 @@ if [ -f "${INFLUXDB_ENV}" ]; then
     if [ -n "${INFLUXDB_ADMIN_TOKEN}" ]; then
         # Install plugin if not already present
         if [ ! -d "${SIGNALK_DATA}/node_modules/signalk-to-influxdb2" ]; then
-            SIGNALK_IMAGE=$(grep -oP 'image:\s*\K\S+' "${SCRIPT_DIR}/docker-compose.yml" | head -1)
-            echo "Installing signalk-to-influxdb2 plugin..."
+            # Prefer the configured image (SIGNALK_IMAGE from the env file);
+            # the compose `image:` line is now a ${SIGNALK_IMAGE} reference, so
+            # grepping it would yield the literal variable, not a real image.
+            SIGNALK_IMAGE="${SIGNALK_IMAGE:-ghcr.io/dirkwa/signalk-server:dirkwa}"
+            echo "Installing signalk-to-influxdb2 plugin (image: ${SIGNALK_IMAGE})..."
             if timeout 120 docker run --rm --entrypoint npm \
                 -v "${SIGNALK_DATA}:/home/node/.signalk" \
                 -u 1000:1000 \

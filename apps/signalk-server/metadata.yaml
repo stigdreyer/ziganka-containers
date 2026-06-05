@@ -50,6 +50,9 @@ routing:
     mode: none
   host_port: 3000
 default_config:
+  # Container image — overridable per-device in Cockpit (see config.yml).
+  # Changing it restarts the service, pulling + recreating with the new image.
+  SIGNALK_IMAGE: "ghcr.io/dirkwa/signalk-server:dirkwa"
   # OIDC Configuration - enabled by default for SSO integration
   SIGNALK_OIDC_ENABLED: "true"
   SIGNALK_OIDC_ISSUER: "https://${HALOS_DOMAIN}/sso"

@@ -24,16 +24,16 @@ Each app is reachable through **two doors**, and HaLOS auto-generates the Traefi
 1. **Native port** — directly on the HALPI2's IP (e.g. `http://halos.local:8123`). No Traefik, no auth.
 2. **HaLOS proxied port** — Traefik assigns each app a per-app TLS port from `/etc/halos/port-registry` (e.g. `:4431`–`:4435`), and `https://halos.local/<app>/` **302-redirects** to that port. The per-app port router applies the app's `routing.auth.mode`.
 
-Because Traefik proxies to the host port, **forward-auth *can* gate a host-networked app on its proxied port** — it just can't cover the native port. Set `routing.auth.mode` explicitly in `metadata.yaml`; if omitted, the build tool defaults it to `forward_auth`.
+Because Traefik proxies to the host port, **forward-auth *can* gate a host-networked app on its proxied port** — it just can't cover the native port. Set `routing.auth.mode` explicitly in `metadata.yaml`; **if omitted, the build tool defaults it to `forward_auth`**, so set it deliberately.
 
-Current `auth.mode`: Home Assistant = `forward_auth` (gated on `:4433`, **bypassable on native `:8123`**); Music Assistant, Signal K, OnaPlotter, Snapcast = `none`.
+Current `auth.mode`: **all apps = `none`**. HA was previously an accidental `forward_auth` default — now explicitly `none`, because HA already requires its own login on both doors (so forward-auth is redundant, doesn't cover native `:8123`, and breaks the Companion app / WebSocket / `/api/`). SSO for HA is done via app-internal OIDC (`hass-oidc-auth`), not proxy forward-auth — see below.
 
 ### Authentication / SSO
 
 HaLOS uses Authelia. Apps tie into Authelia SSO via per-app OIDC (an outbound flow from the app) — and the OIDC redirect resolves fine under host networking, because the `https://halos.local/<app>/...` callback 302-redirects to the app's per-app TLS port:
 
 - **Signal K**: native OIDC support (in this packaging). prestart writes an Authelia client snippet to `/etc/halos/oidc-clients.d/signalk.yml` and a per-host OIDC secret; the `/signalk-server/` → `:4430` redirect makes the callback reach the server. Configured in the app definition here.
-- **Home Assistant**: no native OIDC, but the `hass-oidc-auth` HACS integration works against Authelia as an OIDC client (see Authelia's official HA client guide). App-config/HACS change on the HALPI2, lives in `docs/`.
+- **Home Assistant**: no native OIDC, but the `hass-oidc-auth` HACS integration works against Authelia as an OIDC client (see Authelia's official HA client guide). App-config/HACS change on the HALPI2 — setup steps in `docs/homeassistant-oidc.md`.
 - **Music Assistant**: no generic OIDC support yet (only built-in username/password or Home Assistant OAuth). Pointing MA at HA OAuth chains it to the Authelia identity indirectly. Lives in `docs/`.
 
 ## Repo layout
@@ -60,7 +60,7 @@ tools/
 
 ### Signal K is a fork
 
-`apps/signalk-server/` is forked from `halos-org/halos-marine-containers`. It uses **dirkwa's fork image** on a rolling `:dirkwa` tag (not a pinned semver), mounts the Docker socket, and adds the docker group to `group_add` via a per-host GID resolved in `prestart.sh` (`DOCKER_GID`) — so it stays portable across boats. Because the rolling tag has no semver, `check-updates.yml` can't track it; instead `check-signalk-upstream.yml` watches the upstream *definition* (prestart/metadata/compose) and PRs on drift. The fork shares `app_id: signalk-server` / `client_id: signalk` / host port 3000 with the upstream marine package, so it **replaces** it — they cannot coexist.
+`apps/signalk-server/` is forked from `halos-org/halos-marine-containers`. It uses **dirkwa's fork image** on a rolling `:dirkwa` tag (not a pinned semver), mounts the Docker socket, and adds the docker group to `group_add` via a per-host GID resolved in `prestart.sh` (`DOCKER_GID`) — so it stays portable across boats. The image is **overridable per-device** via the `SIGNALK_IMAGE` config field (Cockpit): `docker-compose.yml` uses `image: ${SIGNALK_IMAGE:-…}`, so changing it in Cockpit restarts the service and recreates the container with the new image, no `.deb` change needed. Because the rolling tag has no semver, `check-updates.yml` can't track it; instead `check-signalk-upstream.yml` watches the upstream *definition* (prestart/metadata/compose) and PRs on drift. The fork shares `app_id: signalk-server` / `client_id: signalk` / host port 3000 with the upstream marine package, so it **replaces** it — they cannot coexist.
 
 ## Building locally (macOS)
 

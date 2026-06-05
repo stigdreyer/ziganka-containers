@@ -4,7 +4,9 @@ services:
     # Ziganka fork: dirkwa's Signal K fork (rolling tag — pulls latest fork
     # build on container recreate). Upstream halos-marine-containers pins
     # signalk/signalk-server by semver; we deliberately track the fork instead.
-    image: ghcr.io/dirkwa/signalk-server:dirkwa
+    # Overridable per-device via the SIGNALK_IMAGE config field (Cockpit) —
+    # changing it triggers a pull + recreate on the next service restart.
+    image: ${SIGNALK_IMAGE:-ghcr.io/dirkwa/signalk-server:dirkwa}
     container_name: signalk-server
     init: true
     restart: unless-stopped

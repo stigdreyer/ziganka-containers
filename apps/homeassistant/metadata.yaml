@@ -38,12 +38,14 @@ web_ui:
 routing:
   host_port: 8123
   auth:
-    # Explicit: HA is gated by Authelia ForwardAuth on its proxied per-app
-    # port (e.g. :4433) and the /homeassistant/ dashboard link. Note this
-    # gate is bypassable on the native :8123 port and can interfere with the
-    # HA companion app / WebSocket / long-lived tokens. Set deliberately
-    # rather than relying on the build tool's default.
-    mode: forward_auth
+    # HA has its own mandatory login on every door (:8123 and the proxied
+    # :4433), so a Traefik ForwardAuth layer would be redundant, wouldn't
+    # cover the native :8123 port, and is known to break the Companion app /
+    # WebSocket / long-lived tokens / /api/. We instead rely on HA's own auth
+    # and wire real SSO via the hass-oidc-auth HACS integration against
+    # Authelia (see docs/homeassistant-oidc.md). Set explicitly to override
+    # the build tool's forward_auth default.
+    mode: none
 layout:
   priority: 60
   width: 2
