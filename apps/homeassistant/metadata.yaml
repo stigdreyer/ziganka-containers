@@ -37,6 +37,13 @@ web_ui:
   visible: true
 routing:
   host_port: 8123
+  auth:
+    # Explicit: HA is gated by Authelia ForwardAuth on its proxied per-app
+    # port (e.g. :4433) and the /homeassistant/ dashboard link. Note this
+    # gate is bypassable on the native :8123 port and can interfere with the
+    # HA companion app / WebSocket / long-lived tokens. Set deliberately
+    # rather than relying on the build tool's default.
+    mode: forward_auth
 layout:
   priority: 60
   width: 2

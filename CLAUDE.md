@@ -10,11 +10,31 @@ Produces Debian `.deb` packages installable via APT on the HALPI2. Each package 
 
 | App | Port | Networking | Image |
 |-----|------|-----------|-------|
-| Home Assistant | 8123 | bridge (Traefik) | `ghcr.io/home-assistant/home-assistant` |
-| Music Assistant | 8095 | bridge (Traefik) | `ghcr.io/music-assistant/server` |
+| Home Assistant | 8123 | host | `ghcr.io/home-assistant/home-assistant` |
+| Music Assistant | 8095 | host | `ghcr.io/music-assistant/server` |
+| Signal K Server | 3000 | host | `ghcr.io/dirkwa/signalk-server:dirkwa` (fork, rolling tag) |
 | Snapcast Client | — | host | custom Dockerfile (GitHub releases) |
 
-Host networking apps (Snapclient) are accessed directly on the HALPI2's IP. Bridge apps are proxied via Traefik and accessible through HaLOS's reverse proxy.
+All current apps use **host networking**. Host networking is mandatory for these: Home Assistant needs it for Bluetooth (BlueZ via D-Bus) and mDNS discovery; Music Assistant needs it so librespot (Spotify Connect) and shairport-sync (AirPlay) advertise the real LAN IP; Signal K needs it for mDNS and direct sensor/serial access.
+
+### Routing model (host networking ≠ no Traefik)
+
+Each app is reachable through **two doors**, and HaLOS auto-generates the Traefik side from the package's `routing.d` declaration — host networking does *not* mean the app bypasses Traefik:
+
+1. **Native port** — directly on the HALPI2's IP (e.g. `http://halos.local:8123`). No Traefik, no auth.
+2. **HaLOS proxied port** — Traefik assigns each app a per-app TLS port from `/etc/halos/port-registry` (e.g. `:4431`–`:4435`), and `https://halos.local/<app>/` **302-redirects** to that port. The per-app port router applies the app's `routing.auth.mode`.
+
+Because Traefik proxies to the host port, **forward-auth *can* gate a host-networked app on its proxied port** — it just can't cover the native port. Set `routing.auth.mode` explicitly in `metadata.yaml`; if omitted, the build tool defaults it to `forward_auth`.
+
+Current `auth.mode`: Home Assistant = `forward_auth` (gated on `:4433`, **bypassable on native `:8123`**); Music Assistant, Signal K, OnaPlotter, Snapcast = `none`.
+
+### Authentication / SSO
+
+HaLOS uses Authelia. Apps tie into Authelia SSO via per-app OIDC (an outbound flow from the app) — and the OIDC redirect resolves fine under host networking, because the `https://halos.local/<app>/...` callback 302-redirects to the app's per-app TLS port:
+
+- **Signal K**: native OIDC support (in this packaging). prestart writes an Authelia client snippet to `/etc/halos/oidc-clients.d/signalk.yml` and a per-host OIDC secret; the `/signalk-server/` → `:4430` redirect makes the callback reach the server. Configured in the app definition here.
+- **Home Assistant**: no native OIDC, but the `hass-oidc-auth` HACS integration works against Authelia as an OIDC client (see Authelia's official HA client guide). App-config/HACS change on the HALPI2, lives in `docs/`.
+- **Music Assistant**: no generic OIDC support yet (only built-in username/password or Home Assistant OAuth). Pointing MA at HA OAuth chains it to the Authelia identity indirectly. Lives in `docs/`.
 
 ## Repo layout
 
@@ -35,7 +55,12 @@ tools/
   release.yml          # tag push: create GitHub Release with .deb files
   check-updates.yml    # daily: PR for new HA/MA image versions
   check-snapclient-updates.yml  # daily: PR for new Snapcast releases
+  check-signalk-upstream.yml    # daily: PR when upstream signalk-server definition drifts
 ```
+
+### Signal K is a fork
+
+`apps/signalk-server/` is forked from `halos-org/halos-marine-containers`. It uses **dirkwa's fork image** on a rolling `:dirkwa` tag (not a pinned semver), mounts the Docker socket, and adds the docker group to `group_add` via a per-host GID resolved in `prestart.sh` (`DOCKER_GID`) — so it stays portable across boats. Because the rolling tag has no semver, `check-updates.yml` can't track it; instead `check-signalk-upstream.yml` watches the upstream *definition* (prestart/metadata/compose) and PRs on drift. The fork shares `app_id: signalk-server` / `client_id: signalk` / host port 3000 with the upstream marine package, so it **replaces** it — they cannot coexist.
 
 ## Building locally (macOS)
 

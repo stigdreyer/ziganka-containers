@@ -1,0 +1,58 @@
+
+services:
+  signalk-server:
+    # Ziganka fork: dirkwa's Signal K fork (rolling tag — pulls latest fork
+    # build on container recreate). Upstream halos-marine-containers pins
+    # signalk/signalk-server by semver; we deliberately track the fork instead.
+    image: ghcr.io/dirkwa/signalk-server:dirkwa
+    container_name: signalk-server
+    init: true
+    restart: unless-stopped
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+    network_mode: host
+    extra_hosts:
+      # Signal K uses host networking so resolves via host DNS/mDNS
+      - "${HALOS_DOMAIN}:127.0.0.1"
+    environment:
+      - EXTERNALHOST=${EXTERNALHOST:-}
+      - EXTERNALPORT=${EXTERNALPORT:-}
+      - EXTERNALSSL=${EXTERNALSSL:-}
+      - NODE_NO_WARNINGS=1
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      - SIGNALK_OIDC_ENABLED=${SIGNALK_OIDC_ENABLED:-false}
+      - SIGNALK_OIDC_ISSUER=${SIGNALK_OIDC_ISSUER:-}
+      - SIGNALK_OIDC_CLIENT_ID=${SIGNALK_OIDC_CLIENT_ID:-}
+      - SIGNALK_OIDC_CLIENT_SECRET=${SIGNALK_OIDC_CLIENT_SECRET:-}
+      - SIGNALK_OIDC_REDIRECT_URI=${SIGNALK_OIDC_REDIRECT_URI:-}
+      - SIGNALK_OIDC_SCOPE=${SIGNALK_OIDC_SCOPE:-openid email profile groups}
+      - SIGNALK_OIDC_PROVIDER_NAME=${SIGNALK_OIDC_PROVIDER_NAME:-HaLOS SSO}
+      - SIGNALK_OIDC_DEFAULT_PERMISSION=${SIGNALK_OIDC_DEFAULT_PERMISSION:-readonly}
+      - SIGNALK_OIDC_ADMIN_GROUPS=${SIGNALK_OIDC_ADMIN_GROUPS:-}
+      - SIGNALK_OIDC_READWRITE_GROUPS=${SIGNALK_OIDC_READWRITE_GROUPS:-}
+      - SIGNALK_OIDC_AUTO_LOGIN=${SIGNALK_OIDC_AUTO_LOGIN:-false}
+    volumes:
+      - ${CONTAINER_DATA_ROOT}/data:/home/node/.signalk
+      - /dev:/dev
+      - /run:/run
+      # Ziganka fork: expose the host Docker socket to the container.
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "960"  # halpid group for /run/halpid/halpid.sock access
+      # docker socket group — resolved per-host by prestart.sh (DOCKER_GID),
+      # so this works on any boat regardless of the local docker GID. The
+      # 999 fallback only applies if the socket is absent at start.
+      - "${DOCKER_GID:-999}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/signalk || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    privileged: true
+    security_opt:
+      - no-new-privileges:false
+    cap_add:
+      - NET_ADMIN

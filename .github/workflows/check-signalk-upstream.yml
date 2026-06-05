@@ -1,0 +1,110 @@
+name: Check for upstream Signal K definition drift
+
+# apps/signalk-server/ is a fork of halos-org/halos-marine-containers'
+# signalk-server app. The container image is dirkwa's fork on a rolling tag,
+# so check-updates.yml (semver image bumps) can't track it. This workflow
+# instead watches the *upstream definition* (prestart.sh, metadata.yaml,
+# docker-compose.yml, config.yml, default-data) and opens a PR when it
+# changes, so the fork can be reconciled by hand. It does NOT auto-apply
+# upstream changes — our copy is intentionally customized.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Daily 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.repository }}-check-signalk-upstream
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_REPO: halos-org/halos-marine-containers
+  UPSTREAM_PATH: apps/signalk-server
+  REF_FILE: apps/signalk-server/.upstream-ref
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Compare recorded upstream ref against latest
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          CURRENT=$(tr -d '[:space:]' < "$REF_FILE")
+          LATEST=$(gh api "repos/${UPSTREAM_REPO}/commits?path=${UPSTREAM_PATH}&per_page=1" --jq '.[0].sha')
+          if [ -z "$LATEST" ]; then
+            echo "ERROR: could not resolve latest upstream SHA" >&2
+            exit 1
+          fi
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "latest=$LATEST"  >> "$GITHUB_OUTPUT"
+          if [ "$CURRENT" != "$LATEST" ]; then
+            echo "has_drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_drift=false" >> "$GITHUB_OUTPUT"
+            echo "Signal K upstream definition is up to date ($CURRENT)."
+          fi
+
+      - name: Summarize changed upstream files
+        id: diff
+        if: steps.check.outputs.has_drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ steps.check.outputs.current }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # Files changed under the upstream signalk path between the two refs.
+          FILES=$(gh api "repos/${UPSTREAM_REPO}/compare/${CURRENT}...${LATEST}" \
+            --jq ".files[] | select(.filename | startswith(\"${UPSTREAM_PATH}/\")) | \"- \(.status): \(.filename)\"" \
+            || true)
+          {
+            echo "files<<EOF"
+            if [ -n "$FILES" ]; then echo "$FILES"; else echo "(path-scoped diff unavailable; see compare link)"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open / update drift PR
+        if: steps.check.outputs.has_drift == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ steps.check.outputs.current }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          FILES: ${{ steps.diff.outputs.files }}
+        run: |
+          set -euo pipefail
+          BRANCH="chore/signalk-upstream-${LATEST:0:12}"
+          printf '%s\n' "$LATEST" > "$REF_FILE"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add "$REF_FILE"
+          git commit -m "chore: signalk upstream drift ${CURRENT:0:12} → ${LATEST:0:12}"
+          git push --force origin "$BRANCH"
+          COMPARE="https://github.com/${UPSTREAM_REPO}/compare/${CURRENT}...${LATEST}"
+          BODY=$(cat <<EOF
+          Upstream \`${UPSTREAM_REPO}\` changed the \`${UPSTREAM_PATH}\` definition.
+
+          **Compare:** ${COMPARE}
+
+          **Changed files:**
+          ${FILES}
+
+          ⚠️ Our \`apps/signalk-server/\` is a **customized fork** (dirkwa image, docker.sock mount, dynamic DOCKER_GID, \`ziganka-\` paths). Do **not** blindly copy upstream — review the diff above and port only the relevant changes by hand. Merging this PR just advances the tracked upstream ref.
+          EOF
+          )
+          if ! gh pr list --head "$BRANCH" --json number --jq '.[0].number' | grep -q .; then
+            gh pr create \
+              --title "chore: signalk upstream definition drift (${CURRENT:0:12} → ${LATEST:0:12})" \
+              --body "$BODY" \
+              --base main \
+              --head "$BRANCH"
+          fi
