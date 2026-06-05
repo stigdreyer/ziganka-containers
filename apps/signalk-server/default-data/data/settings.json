@@ -4,21 +4,21 @@
   "pipedProviders": [
     {
       "id": "gpsd",
+      "enabled": true,
       "pipeElements": [
         {
-          "type": "providers/gpsd",
+          "type": "providers/simple",
           "options": {
-            "hostname": "localhost",
-            "port": 2947,
-            "noDataReceivedTimeout": 30,
-            "reconnectInterval": 15
+            "logging": false,
+            "type": "NMEA0183",
+            "subOptions": {
+              "type": "gpsd",
+              "host": "localhost",
+              "port": "2947"
+            }
           }
-        },
-        {
-          "type": "providers/nmea0183-signalk"
         }
-      ],
-      "enabled": true
+      ]
     }
   ]
 }
