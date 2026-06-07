@@ -13,17 +13,33 @@ services:
         tag: "{{.Name}}"
     environment:
       - LOG_LEVEL=info
+      # Trust the HaLOS CA so MA's outbound TLS (notably the Home Assistant
+      # OAuth token exchange, which always verifies and ignores MA's
+      # "Verify SSL" setting) validates https://${HALOS_DOMAIN}:4433. Points
+      # Python/OpenSSL at the host CA bundle mounted below, which already
+      # includes the "HaLOS Device CA".
+      - SSL_CERT_FILE=/etc/halos-ca-certificates.crt
     volumes:
       # MA state, providers config, cache
       - ${CONTAINER_DATA_ROOT}/data:/data
       # DRM-free local music; populate via rsync or by extending this mount
       # to include a USB stick mountpoint under /media/<user>/<label>.
       - ${CONTAINER_DATA_ROOT}/library:/library:ro
+      # Host CA bundle (includes the HaLOS Device CA) for SSL_CERT_FILE above.
+      - /etc/ssl/certs/ca-certificates.crt:/etc/halos-ca-certificates.crt:ro
     # Host networking is required so that librespot (Spotify Connect) and
     # shairport-sync (AirPlay) advertise the HALPI2's real LAN IP rather than
     # a Docker-internal address that clients cannot reach. Web UI on :8095 and
     # Snapcast ports are directly accessible on the host without port mapping.
     network_mode: host
+    # Resolve the HaLOS domain to the loopback Traefik listener so server-side
+    # calls from inside the container succeed (e.g. the Home Assistant OAuth
+    # token exchange against https://${HALOS_DOMAIN}:4433 when using HA as an
+    # SSO provider). The container's resolver does not do mDNS, so ".local"
+    # names otherwise fail with "Domain name not found". HALOS_DOMAIN comes
+    # from the generated prestart runtime.env.
+    extra_hosts:
+      - "${HALOS_DOMAIN}:127.0.0.1"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8095"]
       interval: 30s
