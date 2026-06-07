@@ -41,7 +41,9 @@ Halpi2/
 │   ├── snapclient/            # Snapcast client → HDMI audio
 │   └── ona-plotter/           # OnaPlotter SignalK chartplotter
 ├── docs/
-│   └── homeassistant-oidc.md  # HA ↔ Authelia SSO setup
+│   ├── app-integration-patterns.md  # networking/TLS/SSO gotchas for new apps
+│   ├── homeassistant-oidc.md  # HA ↔ Authelia SSO setup
+│   └── musicassistant-sso.md  # MA → HA → Authelia SSO setup
 ├── docker/
 │   └── ona-plotter/           # CI image build context for OnaPlotter
 ├── tools/

@@ -34,7 +34,9 @@ HaLOS uses Authelia. Apps tie into Authelia SSO via per-app OIDC (an outbound fl
 
 - **Signal K**: native OIDC support (in this packaging). prestart writes an Authelia client snippet to `/etc/halos/oidc-clients.d/signalk.yml` and a per-host OIDC secret; the `/signalk-server/` → `:4430` redirect makes the callback reach the server. Configured in the app definition here.
 - **Home Assistant**: no native OIDC, but the `hass-oidc-auth` HACS integration works against Authelia as an OIDC client (see Authelia's official HA client guide). App-config/HACS change on the HALPI2 — setup steps in `docs/homeassistant-oidc.md`.
-- **Music Assistant**: no generic OIDC support yet (only built-in username/password or Home Assistant OAuth). Pointing MA at HA OAuth chains it to the Authelia identity indirectly. Lives in `docs/`.
+- **Music Assistant**: no generic OIDC support yet (only built-in username/password or Home Assistant OAuth). Pointing MA at HA OAuth chains it to the Authelia identity indirectly (MA → HA → Authelia). Setup + the reverse-proxy TLS plumbing in `docs/musicassistant-sso.md`.
+
+> **Adding an app that talks to HaLOS services (Authelia/HA) or any `https://halos.local/...` from inside its container?** Read **`docs/app-integration-patterns.md`** first. It captures the non-obvious gotchas we hit repeatedly: containers can't resolve mDNS `.local` (need `extra_hosts: ${HALOS_DOMAIN}:127.0.0.1`); trusting the self-signed HaLOS CA (system store vs `certifi`/aiohttp, which needs an entrypoint wrapper); bind-mount **directories not files** (postinst `mkdir` fails on a file); the single browser-vs-server-side URL tension for OIDC; and the prestart Authelia-client-registration pattern.
 
 ## Repo layout
 
