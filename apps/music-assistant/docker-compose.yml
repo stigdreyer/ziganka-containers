@@ -2,6 +2,20 @@ services:
   music-assistant:
     image: ghcr.io/music-assistant/server:2.8.8
     container_name: music-assistant
+    # MA (aiohttp) verifies outbound TLS against certifi's bundle, baked into
+    # the image — it ignores SSL_CERT_FILE and the system cert store, so it
+    # can't trust the self-signed HaLOS CA, and the HA-SSO OAuth/WebSocket to
+    # https://${HALOS_DOMAIN}:4433 fails verification. Append the HaLOS CA
+    # (from the host bundle overlaid at /etc/ssl/certs below) into certifi's
+    # cacert.pem *before* MA starts — it caches its SSL context at startup, so
+    # patching after the fact has no effect — then exec the image's real
+    # entrypoint. The container fs resets on each recreate, so this re-applies
+    # cleanly every start. (certifi path resolved dynamically to survive Python
+    # version bumps; the entrypoint args mirror the image default.)
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "cat /etc/ssl/certs/ca-certificates.crt >> \"$(python3 -c 'import certifi;print(certifi.where())')\"; exec /usr/local/bin/entrypoint.sh --data-dir /data --cache-dir /data/.cache"
     depends_on:
       network-check:
         condition: service_healthy
@@ -13,11 +27,9 @@ services:
         tag: "{{.Name}}"
     environment:
       - LOG_LEVEL=info
-      # Trust the HaLOS CA for MA's outbound TLS (HA OAuth token exchange +
-      # WebSocket validation to https://${HALOS_DOMAIN}:4433). Belt-and-braces
-      # with the cert-dir overlay below: SSL_CERT_FILE covers code paths that
-      # honor it; the overlay covers aiohttp's ssl=True default context, which
-      # ignores SSL_CERT_FILE and reads the system default store.
+      # Covers code paths that DO honor SSL_CERT_FILE (e.g. plain
+      # ssl.create_default_context()); the certifi paths are handled by the
+      # entrypoint append above. Harmless belt-and-braces.
       - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
     volumes:
       # MA state, providers config, cache
@@ -25,11 +37,10 @@ services:
       # DRM-free local music; populate via rsync or by extending this mount
       # to include a USB stick mountpoint under /media/<user>/<label>.
       - ${CONTAINER_DATA_ROOT}/library:/library:ro
-      # Overlay the container's default cert dir with the host's, which already
-      # contains the HaLOS Device CA (+ all public CAs). This makes aiohttp's
-      # ssl=True default context trust HaLOS too. Mount the dir, not a file —
-      # the package postinst mkdir -p's every bind-mount source (errors on a
-      # file); a dir source is a no-op.
+      # Host cert dir (contains the HaLOS Device CA + public CAs). Source for
+      # the entrypoint's certifi append, and trusted by system-store code
+      # paths. Mount the dir, not a file — the package postinst mkdir -p's
+      # every bind-mount source (errors on a file); a dir source is a no-op.
       - /etc/ssl/certs:/etc/ssl/certs:ro
     # Host networking is required so that librespot (Spotify Connect) and
     # shairport-sync (AirPlay) advertise the HALPI2's real LAN IP rather than
