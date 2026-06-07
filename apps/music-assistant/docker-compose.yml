@@ -18,15 +18,17 @@ services:
       # "Verify SSL" setting) validates https://${HALOS_DOMAIN}:4433. Points
       # Python/OpenSSL at the host CA bundle mounted below, which already
       # includes the "HaLOS Device CA".
-      - SSL_CERT_FILE=/etc/halos-ca-certificates.crt
+      - SSL_CERT_FILE=/etc/halos-ssl-certs/ca-certificates.crt
     volumes:
       # MA state, providers config, cache
       - ${CONTAINER_DATA_ROOT}/data:/data
       # DRM-free local music; populate via rsync or by extending this mount
       # to include a USB stick mountpoint under /media/<user>/<label>.
       - ${CONTAINER_DATA_ROOT}/library:/library:ro
-      # Host CA bundle (includes the HaLOS Device CA) for SSL_CERT_FILE above.
-      - /etc/ssl/certs/ca-certificates.crt:/etc/halos-ca-certificates.crt:ro
+      # Host CA *directory* (includes the HaLOS Device CA in ca-certificates.crt)
+      # for SSL_CERT_FILE above. Mount the dir, not the file — the package
+      # postinst mkdir -p's every bind-mount source, which errors on a file.
+      - /etc/ssl/certs:/etc/halos-ssl-certs:ro
     # Host networking is required so that librespot (Spotify Connect) and
     # shairport-sync (AirPlay) advertise the HALPI2's real LAN IP rather than
     # a Docker-internal address that clients cannot reach. Web UI on :8095 and
