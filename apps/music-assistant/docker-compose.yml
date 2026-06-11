@@ -1,6 +1,6 @@
 services:
   music-assistant:
-    image: ghcr.io/music-assistant/server:2.8.8
+    image: ghcr.io/music-assistant/server:2.9.0
     container_name: music-assistant
     # MA (aiohttp) verifies outbound TLS against certifi's bundle, baked into
     # the image — it ignores SSL_CERT_FILE and the system cert store, so it
