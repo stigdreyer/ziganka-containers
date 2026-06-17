@@ -6,13 +6,18 @@
 #
 # Signal K is the single source of truth for severity (NotificationState) and
 # signalling (NotificationMethod = sound/visual). HA only annunciates + lets you
-# acknowledge. Routing is severity-driven; `method` gates the audible channels.
+# acknowledge. Routing is severity-driven.
 #
 #   state       buzzer (Shelly)     Fusion (chime + TTS)
 #   emergency   ✓ continuous        –
 #   alarm       ✓ continuous        –
 #   warn        –                   ✓ once
 #   alert       – (ignored)         –
+#
+# The buzzer is METHOD-INDEPENDENT (fail-safe): any active alarm/emergency sounds
+# it unless that notification is silenced or acknowledged in Signal K (a safety
+# alarm must sound even if its source tagged it visual-only). The mute switch
+# stops it by setting silenced/acknowledged. warn -> Fusion announcement only.
 #
 # Architecture (verified against the live boat 2026-06-17):
 #   - Ingestion: signalk-ha fires the HA bus event `signalk_ziganka_iii_notification`
@@ -62,8 +67,10 @@ rest:
     scan_interval: 30
     timeout: 8
     binary_sensor:
-      # The buzzer "demand": ON when any un-muted, active emergency/alarm still
-      # carries method "sound". This is the critical safety derivation.
+      # The buzzer "demand": ON when any un-muted, active warn/alarm/emergency is
+      # NOT silenced and NOT acknowledged. Method-independent (fail-safe: a
+      # safety alarm sounds even if the source tagged it visual-only); the mute
+      # switch stops it by setting silenced/acknowledged in Signal K.
       - name: "Ziganka Buzzer Demand"
         unique_id: ziganka_buzzer_demand
         device_class: sound
@@ -73,7 +80,8 @@ rest:
           {% set ns = namespace(on=false) %}
           {% for v in (value_json.values() if value_json else []) %}
             {% set val = v.value %}
-            {% if val.state in ['emergency','alarm'] and 'sound' in (val.method or []) and v.path not in muted %}
+            {% set st = val.status or {} %}
+            {% if val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and v.path not in muted %}
               {% set ns.on = true %}
             {% endif %}
           {% endfor %}
@@ -84,7 +92,7 @@ rest:
         device_class: connectivity
         value_template: "{{ value_json is not none }}"
     sensor:
-      # Highest active SOUNDING severity — diagnostics / dashboard.
+      # Highest active (un-silenced/un-acknowledged) severity — diagnostics / dashboard.
       - name: "Ziganka Alarm Highest"
         unique_id: ziganka_alarm_highest
         value_template: >-
@@ -92,7 +100,8 @@ rest:
           {% set ns = namespace(best='none', rank=0) %}
           {% for v in (value_json.values() if value_json else []) %}
             {% set val = v.value %}
-            {% if val.state in order and 'sound' in (val.method or []) and order[val.state] > ns.rank %}
+            {% set st = val.status or {} %}
+            {% if val.state in order and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and order[val.state] > ns.rank %}
               {% set ns.rank = order[val.state] %}
               {% set ns.best = val.state %}
             {% endif %}
@@ -204,7 +213,8 @@ script:
             {% set ns = namespace(items=[]) %}
             {% for k, v in notifs.items() %}
               {% set val = v.value %}
-              {% if val.state in ['emergency','alarm','warn'] and 'sound' in (val.method or []) %}
+              {% set st = val.status or {} %}
+              {% if val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) %}
                 {% set ns.items = ns.items + [{'id': val.id, 'path': v.path, 'status': val.status}] %}
               {% endif %}
             {% endfor %}
@@ -355,8 +365,9 @@ automation:
 
   # --- CRITICAL PATH: buzzer ---
 
-  # Instant ON: react to an emergency/alarm event in the same tick (sub-second),
-  # before the authoritative re-fetch completes. Fail toward sounding.
+  # Instant ON: react to a warn/alarm/emergency event in the same tick
+  # (sub-second), before the authoritative re-fetch completes. Fail toward
+  # sounding — method-independent; only silenced/acknowledged suppress it.
   - id: ziganka_buzzer_instant_on
     alias: "Ziganka: buzzer instant ON"
     mode: queued
@@ -365,8 +376,9 @@ automation:
       - platform: event
         event_type: signalk_ziganka_iii_notification
     condition:
-      - "{{ trigger.event.data.state in ['emergency','alarm'] }}"
-      - "{{ 'sound' in (trigger.event.data.method or []) }}"
+      - "{{ trigger.event.data.state in ['alarm','emergency'] }}"
+      - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
+      - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
       - >-
         {% set m = states('input_text.ziganka_muted_paths') %}
         {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
@@ -405,7 +417,8 @@ automation:
             {% set ns = namespace(on=false) %}
             {% for k, v in notifs.items() %}
               {% set val = v.value %}
-              {% if val.state in ['emergency','alarm'] and 'sound' in (val.method or []) and v.path not in muted %}{% set ns.on = true %}{% endif %}
+              {% set st = val.status or {} %}
+              {% if val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and v.path not in muted %}{% set ns.on = true %}{% endif %}
             {% endfor %}
             {{ 'on' if ns.on else 'off' }}
             {% endif %}
@@ -429,8 +442,11 @@ automation:
       - platform: event
         event_type: signalk_ziganka_iii_notification
     condition:
+      # Method-independent: announce any warn (visual or sound) unless it's
+      # already silenced/acknowledged in Signal K.
       - "{{ trigger.event.data.state == 'warn' }}"
-      - "{{ 'sound' in (trigger.event.data.method or []) }}"
+      - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
+      - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
     action:
       - service: script.ziganka_fusion_warn
         data:

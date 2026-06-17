@@ -15,7 +15,7 @@ here so changes are tracked and reviewable.
 Signal K is the single source of truth for alarm severity (`NotificationState`) and how a
 condition should be signalled (`NotificationMethod` = `sound`/`visual`). HA only **annunciates**
 and provides **acknowledge** — it routes blindly off `state`/`method` and never re-implements
-alarm logic. Routing is severity-driven; `method` gates the audible channels.
+alarm logic. Routing is severity-driven.
 
 | State      | Buzzer (Shelly relay) | Fusion (chime + TTS) |
 |------------|-----------------------|----------------------|
@@ -25,6 +25,13 @@ alarm logic. Routing is severity-driven; `method` gates the audible channels.
 | alert      | – (ignored)           | –                    |
 
 `normal`/`nominal` = cleared. The visual (LED) channel and mobile push are **out of scope in v1**.
+
+The buzzer is **method-independent** (fail-safe): any active `alarm`/`emergency` sounds it unless
+that notification is **silenced or acknowledged** in Signal K — so an alarm a source tagged
+"visual-only" still sounds. The mute switch stops it by setting silenced/acknowledged. (Earlier it
+gated on `method` containing `"sound"`, but a visual-only alarm then stayed silent — unsafe.)
+`warn` does not buzz — it triggers the Fusion announcement, which is **also method-independent**
+(fires for any warn, visual *or* sound, unless silenced/acknowledged).
 
 ### How it works
 
