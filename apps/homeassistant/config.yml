@@ -28,10 +28,12 @@ groups:
   - id: fusion_alerts
     label: Fusion Alert Routing
     description: >
-      Settings used by the Ziganka alert automation when routing spoken
-      alerts through the Fusion MS-BB-100. Volumes use the Fusion's 0-24
-      scale. Higher priorities are louder; caution is silent on the audio
-      channel by design (LEDs and push only).
+      Reference defaults for the Ziganka alert package (deployed separately to
+      /config/packages/ziganka_alerts.yaml). In v1 only WARN-level alerts use
+      the Fusion (chime + spoken TTS, once); emergency/alarm use the external
+      buzzer instead. The package reads the live warn volume from the
+      input_number.ziganka_fusion_warn_volume helper (UI-tunable); the value
+      below is the default. Volumes use the Fusion's 0-24 scale.
     fields:
       - id: FUSION_ZONE
         label: Fusion Output Zone
@@ -42,24 +44,12 @@ groups:
       - id: FUSION_AUX_SOURCE
         label: Fusion AUX Source ID
         type: string
-        default: aux1
+        default: source2
         required: true
-        description: "Fusion source identifier the HALPI2 audio is wired to. Verify by GETing entertainment/device/fusion1/output/zone1/source after manually selecting AUX on the stereo."
-      - id: ALERT_VOL_EMERGENCY
-        label: Emergency Alert Volume (0-24)
-        type: string
-        default: "20"
-        required: true
-        description: "Fusion volume for emergency-priority alerts. Loud; tune at anchor."
-      - id: ALERT_VOL_ALARM
-        label: Alarm Alert Volume (0-24)
-        type: string
-        default: "18"
-        required: true
-        description: "Fusion volume for alarm-priority alerts."
+        description: "Fusion source the HALPI2 audio is wired to. Verified source2 = \"Aux\" on this device (GET entertainment/device/fusion1/avsource lists the names)."
       - id: ALERT_VOL_WARNING
         label: Warning Alert Volume (0-24)
         type: string
         default: "14"
         required: true
-        description: "Fusion volume for warning-priority alerts. Should be audible across the saloon at anchor without being startling."
+        description: "Default Fusion volume for warn-level alerts. Audible across the saloon at anchor without being startling. Live value is set in HA via input_number.ziganka_fusion_warn_volume."

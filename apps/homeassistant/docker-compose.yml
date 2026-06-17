@@ -22,10 +22,11 @@ services:
     environment:
       - TZ=${HA_TZ:-Europe/Oslo}
       - SIGNALK_URL=${SIGNALK_URL:-http://localhost:3000}
+      # Reference defaults for the alert package. v1: only warn-level alerts use
+      # the Fusion (emergency/alarm use the external buzzer). Live warn volume is
+      # tuned via the input_number.ziganka_fusion_warn_volume helper in HA.
       - FUSION_ZONE=${FUSION_ZONE:-zone1}
-      - FUSION_AUX_SOURCE=${FUSION_AUX_SOURCE:-aux1}
-      - ALERT_VOL_EMERGENCY=${ALERT_VOL_EMERGENCY:-20}
-      - ALERT_VOL_ALARM=${ALERT_VOL_ALARM:-18}
+      - FUSION_AUX_SOURCE=${FUSION_AUX_SOURCE:-source2}
       - ALERT_VOL_WARNING=${ALERT_VOL_WARNING:-14}
     volumes:
       - ${CONTAINER_DATA_ROOT}/config:/config

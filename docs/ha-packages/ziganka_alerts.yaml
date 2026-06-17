@@ -1,480 +1,519 @@
 # =============================================================================
-# Ziganka — SignalK alert routing (Phase 1 / MVP)
+# Ziganka — Signal K alert routing (v1: buzzer + Fusion)
 # =============================================================================
+# Deploy to: /config/packages/ziganka_alerts.yaml on the HALPI2 (HA volume)
+# Enabled via configuration.yaml: `homeassistant: packages: !include_dir_named packages`
 #
-# Deploy to:    /config/packages/ziganka_alerts.yaml  on the HALPI2 (HA volume)
+# Signal K is the single source of truth for severity (NotificationState) and
+# signalling (NotificationMethod = sound/visual). HA only annunciates + lets you
+# acknowledge. Routing is severity-driven; `method` gates the audible channels.
 #
-# Enable packages once in /config/configuration.yaml (top-level):
+#   state       buzzer (Shelly)     Fusion (chime + TTS)
+#   emergency   ✓ continuous        –
+#   alarm       ✓ continuous        –
+#   warn        –                   ✓ once
+#   alert       – (ignored)         –
 #
-#   homeassistant:
-#     packages: !include_dir_named packages
+# Architecture (verified against the live boat 2026-06-17):
+#   - Ingestion: signalk-ha fires the HA bus event `signalk_ziganka_iii_notification`
+#     with the full payload (path/state/method/message/...).
+#   - Authoritative active-set: GET http://localhost:3000/signalk/v2/api/notifications
+#     (no auth for GET). NOTE: this list INCLUDES cleared (state=normal) entries,
+#     so we always filter `state not in [normal, nominal]`.
+#   - Writes (ack/silence, Fusion control, test POST) need a readwrite token,
+#     stored in secrets.yaml as `signalk_auth_header` ("Bearer <jwt>").
+#   - Mute verbs are POST (not PUT); we drive mute off the runtime status flags:
+#     canAcknowledge -> acknowledge, elif canSilence -> silence, else local cut.
 #
-# Then `mkdir /config/packages` (if missing), drop this file in, restart HA.
-#
-# -----------------------------------------------------------------------------
-# Phase 1 scope (MVP)
-# -----------------------------------------------------------------------------
-#   - Trigger on SignalK notifications via signalk-ha integration (push-based,
-#     no polling, no auth token required)
-#   - On new active alert: push to phone (always) + opportunistic Fusion TTS
-#   - Snapshot/restore Fusion state around alert playback
-#   - Acknowledge/silence buttons via push actions
-#
-# Phase 2 (Shelly buzzer + Govee LEDs + mute switch) is NOT in this file.
-#
-# -----------------------------------------------------------------------------
-# Prerequisites on the HALPI2 (do these BEFORE restarting HA with this file)
-# -----------------------------------------------------------------------------
-#   1. signalk-ha custom integration installed (HACS) and configured, pointing
-#      at localhost:3000. Notifications enabled (default: notifications.*).
-#   2. ziganka-wyoming-piper-container installed and Wyoming integration
-#      added in HA Settings → Devices → Add Integration → Wyoming Protocol,
-#      pointing at host `localhost`, port `10200`.
-#   3. (Optional) HA Companion app installed on a phone for push notifications.
-#      Set input_text.ziganka_notify_target to your notify service.
-#   4. (Optional) chime files at /config/www/alerts/{emergency,alarm,warning}.mp3.
-#      The script gracefully skips chimes if files are missing.
-#
-# -----------------------------------------------------------------------------
-# CUSTOMIZE BEFORE FIRST USE
-# -----------------------------------------------------------------------------
-# Set these helpers from HA UI (Settings → Devices & Services → Helpers):
-#   - input_text.ziganka_ma_player       → media_player.halos
-#   - input_text.ziganka_notify_target   → notify.mobile_app_<device> or notify.notify
+# Entities (verified):
+#   Buzzer relay : switch.ziganka_iii_external_alarm        (Shelly, detached, local)
+#   Mute input   : binary_sensor.ziganka_iii_external_alarm_input_0
+#   Fusion player: media_player.halos       TTS: tts.piper       Fusion AUX = source2
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
-# Helpers (state snapshots + user-tunable values)
+# Helpers
 # -----------------------------------------------------------------------------
 input_text:
-  fusion_pre_alert_state:
-    name: Fusion state snapshot
+  ziganka_muted_paths:
+    # JSON list of notification paths muted LOCALLY (used only when Signal K
+    # can neither acknowledge nor silence a still-active alarm). Pruned on clear.
+    name: Ziganka locally-muted paths
     max: 255
-    initial: ""
-
-  ziganka_ma_player:
-    name: MA media_player entity_id
-    max: 100
-    # Set to media_player.halos (Fusion stereo via signalk-ha)
-    initial: "media_player.halos"
-
-  ziganka_notify_target:
-    name: HA Companion notify service
-    max: 100
-    # Set to notify.mobile_app_<devicename> or notify.notify to broadcast.
-    initial: "notify.notify"
+    initial: "[]"
 
 input_number:
-  ziganka_vol_emergency:
-    name: Alert volume — emergency
-    min: 0
-    max: 24
-    step: 1
-    initial: 20
-    icon: mdi:alert-octagon
-  ziganka_vol_alarm:
-    name: Alert volume — alarm
-    min: 0
-    max: 24
-    step: 1
-    initial: 18
-    icon: mdi:alarm-light
-  ziganka_vol_warning:
-    name: Alert volume — warning
+  ziganka_fusion_warn_volume:
+    name: Fusion warn alert volume
     min: 0
     max: 24
     step: 1
     initial: 14
-    icon: mdi:alert
-
-input_boolean:
-  ziganka_alert_active:
-    name: Alert sequence in progress
-    icon: mdi:alarm-light
-  ziganka_night_mode:
-    name: Night mode (volumes scaled 50%)
-    icon: mdi:weather-night
+    icon: mdi:volume-high
 
 
 # -----------------------------------------------------------------------------
-# Sensors — Fusion state (REST)
+# REST — authoritative active-set (source of truth) + reachability
+# Reconcile poll every 30 s; also refreshed on demand by the event automations.
 # -----------------------------------------------------------------------------
-# Alert data comes from signalk-ha (sensor.signalk_last_notification) — no
-# polling sensor needed here.
 rest:
-  - resource: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1"
-    scan_interval: 60
-    timeout: 5
+  - resource: "http://localhost:3000/signalk/v2/api/notifications"
+    scan_interval: 30
+    timeout: 8
+    binary_sensor:
+      # The buzzer "demand": ON when any un-muted, active emergency/alarm still
+      # carries method "sound". This is the critical safety derivation.
+      - name: "Ziganka Buzzer Demand"
+        unique_id: ziganka_buzzer_demand
+        device_class: sound
+        value_template: >-
+          {% set m = states('input_text.ziganka_muted_paths') %}
+          {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+          {% set ns = namespace(on=false) %}
+          {% for v in (value_json.values() if value_json else []) %}
+            {% set val = v.value %}
+            {% if val.state in ['emergency','alarm'] and 'sound' in (val.method or []) and v.path not in muted %}
+              {% set ns.on = true %}
+            {% endif %}
+          {% endfor %}
+          {{ 'on' if ns.on else 'off' }}
+      # Reachability proxy: unavailable if the fetch fails (drives fail-loud).
+      - name: "Ziganka SignalK Reachable"
+        unique_id: ziganka_signalk_reachable
+        device_class: connectivity
+        value_template: "{{ value_json is not none }}"
     sensor:
-      - name: "Fusion Device"
-        unique_id: ziganka_fusion_device
-        value_template: "{{ 'reachable' if value_json is mapping else 'unreachable' }}"
-        json_attributes_path: "$"
-        json_attributes:
-          - state
-          - output
+      # Highest active SOUNDING severity — diagnostics / dashboard.
+      - name: "Ziganka Alarm Highest"
+        unique_id: ziganka_alarm_highest
+        value_template: >-
+          {% set order = {'emergency':4,'alarm':3,'warn':2,'alert':1} %}
+          {% set ns = namespace(best='none', rank=0) %}
+          {% for v in (value_json.values() if value_json else []) %}
+            {% set val = v.value %}
+            {% if val.state in order and 'sound' in (val.method or []) and order[val.state] > ns.rank %}
+              {% set ns.rank = order[val.state] %}
+              {% set ns.best = val.state %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.best }}
 
 
 # -----------------------------------------------------------------------------
-# Template sensors — Fusion fields
-# -----------------------------------------------------------------------------
-template:
-  - sensor:
-      - name: "Fusion Power"
-        unique_id: ziganka_fusion_power
-        state: >-
-          {% set s = state_attr('sensor.fusion_device', 'state') %}
-          {{ s.value if s and s.value is defined else 'unknown' }}
-
-      - name: "Fusion Source"
-        unique_id: ziganka_fusion_source
-        state: >-
-          {% set o = state_attr('sensor.fusion_device', 'output') %}
-          {{ o.zone1.source.value if o and o.zone1 is defined and o.zone1.source is defined else 'unknown' }}
-
-      - name: "Fusion Muted"
-        unique_id: ziganka_fusion_muted
-        state: >-
-          {% set o = state_attr('sensor.fusion_device', 'output') %}
-          {{ o.zone1.isMuted.value if o and o.zone1 is defined and o.zone1.isMuted is defined else false }}
-
-      - name: "Fusion Volume"
-        unique_id: ziganka_fusion_volume
-        state: >-
-          {% set o = state_attr('sensor.fusion_device', 'output') %}
-          {{ o.zone1.volume.master.value if o and o.zone1 is defined and o.zone1.volume is defined else 0 }}
-
-  - binary_sensor:
-      - name: "Fusion Reachable"
-        unique_id: ziganka_fusion_reachable
-        state: "{{ states('sensor.fusion_device') == 'reachable' }}"
-
-
-# -----------------------------------------------------------------------------
-# REST commands — Fusion control + alert ack/silence
+# REST commands — Signal K reads/writes + Fusion control (writes need the token)
 # -----------------------------------------------------------------------------
 rest_command:
-  fusion_set_power:
+  ziganka_sk_get_notifications:
+    url: "http://localhost:3000/signalk/v2/api/notifications"
+    method: GET
+    timeout: 8
+
+  ziganka_sk_acknowledge:
+    url: "http://localhost:3000/signalk/v2/api/notifications/{{ id }}/acknowledge"
+    method: POST
+    headers:
+      Authorization: !secret signalk_auth_header
+    timeout: 6
+
+  ziganka_sk_silence:
+    url: "http://localhost:3000/signalk/v2/api/notifications/{{ id }}/silence"
+    method: POST
+    headers:
+      Authorization: !secret signalk_auth_header
+    timeout: 6
+
+  ziganka_sk_post_notification:
+    url: "http://localhost:3000/signalk/v2/api/notifications"
+    method: POST
+    headers:
+      Authorization: !secret signalk_auth_header
+    content_type: "application/json"
+    payload: '{"state":"{{ state }}","message":"{{ message }}","path":"{{ path }}","method":["sound","visual"]}'
+    timeout: 6
+
+  ziganka_sk_clear:
+    url: "http://localhost:3000/signalk/v2/api/notifications/{{ id }}"
+    method: DELETE
+    headers:
+      Authorization: !secret signalk_auth_header
+    timeout: 6
+
+  ziganka_fusion_get:
+    url: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1"
+    method: GET
+    timeout: 6
+
+  ziganka_fusion_set_power:
     url: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1/state"
     method: PUT
-    headers: { Content-Type: application/json }
-    payload: '{"value": "{{ value }}"}'
-    timeout: 5
+    headers:
+      Authorization: !secret signalk_auth_header
+    content_type: "application/json"
+    payload: '{"value":"{{ value }}"}'
+    timeout: 6
 
-  fusion_set_source:
+  ziganka_fusion_set_source:
     url: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1/output/zone1/source"
     method: PUT
-    headers: { Content-Type: application/json }
-    payload: '{"value": "{{ value }}"}'
-    timeout: 5
+    headers:
+      Authorization: !secret signalk_auth_header
+    content_type: "application/json"
+    payload: '{"value":"{{ value }}"}'
+    timeout: 6
 
-  fusion_set_muted:
-    url: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1/output/zone1/isMuted"
-    method: PUT
-    headers: { Content-Type: application/json }
-    payload: '{"value": {{ value }} }'
-    timeout: 5
-
-  fusion_set_volume:
+  ziganka_fusion_set_volume:
     url: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1/output/zone1/volume/master"
     method: PUT
-    headers: { Content-Type: application/json }
-    payload: '{"value": {{ value }} }'
-    timeout: 5
+    headers:
+      Authorization: !secret signalk_auth_header
+    content_type: "application/json"
+    payload: '{"value":{{ value }}}'
+    timeout: 6
 
-  signalk_acknowledge_alert:
-    url: "http://localhost:3000/plugins/signalk-alert-manager/alerts/{{ alert_id }}/acknowledge"
-    method: POST
-    timeout: 5
-
-  signalk_silence_alert:
-    url: "http://localhost:3000/plugins/signalk-alert-manager/alerts/{{ alert_id }}/silence"
-    method: POST
-    timeout: 5
+  ziganka_fusion_set_muted:
+    url: "http://localhost:3000/signalk/v1/api/vessels/self/entertainment/device/fusion1/output/zone1/isMuted"
+    method: PUT
+    headers:
+      Authorization: !secret signalk_auth_header
+    content_type: "application/json"
+    payload: '{"value":{{ value }}}'
+    timeout: 6
 
 
 # -----------------------------------------------------------------------------
-# Scripts — alert sequence + helpers
+# Scripts
 # -----------------------------------------------------------------------------
 script:
 
-  ziganka_alert_snapshot_fusion:
-    alias: "Ziganka: snapshot Fusion state"
+  # Mute / acknowledge ALL currently-sounding alarms. Driven by runtime status
+  # flags: acknowledge if possible, else silence, else local-cut (track path).
+  ziganka_mute:
+    alias: "Ziganka: mute / acknowledge active alarms"
+    mode: queued
+    max: 3
     sequence:
+      # Quiet the buzzer immediately for responsiveness; reconcile confirms below.
+      - service: switch.turn_off
+        target: { entity_id: switch.ziganka_iii_external_alarm }
+      - service: rest_command.ziganka_sk_get_notifications
+        response_variable: resp
+      - variables:
+          notifs: "{{ resp.content if (resp is defined and resp.content is defined) else {} }}"
+          sounding: >-
+            {% set ns = namespace(items=[]) %}
+            {% for k, v in notifs.items() %}
+              {% set val = v.value %}
+              {% if val.state in ['emergency','alarm','warn'] and 'sound' in (val.method or []) %}
+                {% set ns.items = ns.items + [{'id': val.id, 'path': v.path, 'status': val.status}] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.items }}
+      - repeat:
+          for_each: "{{ sounding }}"
+          sequence:
+            - choose:
+                - conditions: "{{ repeat.item.status.canAcknowledge | default(false) }}"
+                  sequence:
+                    - service: rest_command.ziganka_sk_acknowledge
+                      data: { id: "{{ repeat.item.id }}" }
+                - conditions: "{{ repeat.item.status.canSilence | default(false) }}"
+                  sequence:
+                    - service: rest_command.ziganka_sk_silence
+                      data: { id: "{{ repeat.item.id }}" }
+              default:
+                # Neither possible (e.g. emergency w/ canAcknowledge=false): keep
+                # the local relay cut and remember the path so reconcile won't
+                # re-energise it while the condition persists.
+                - service: input_text.set_value
+                  target: { entity_id: input_text.ziganka_muted_paths }
+                  data:
+                    value: >-
+                      {% set m = states('input_text.ziganka_muted_paths') %}
+                      {% set cur = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+                      {{ (cur + [repeat.item.path]) | unique | list | tojson }}
+      # Give Signal K a moment to reflect the acks, then refresh the demand so the
+      # reconcile automation makes the relay match reality (stays off).
+      - delay: { milliseconds: 1200 }
       - service: homeassistant.update_entity
         target:
-          entity_id: sensor.fusion_device
-      - delay: { milliseconds: 600 }
-      - service: input_text.set_value
-        target:
-          entity_id: input_text.fusion_pre_alert_state
-        data:
-          value: "{{ {'power': states('sensor.fusion_power'), 'source': states('sensor.fusion_source'), 'muted': states('sensor.fusion_muted'), 'volume': states('sensor.fusion_volume') | int(0)} | to_json }}"
+          entity_id:
+            - binary_sensor.ziganka_buzzer_demand
+            - sensor.ziganka_alarm_highest
 
-  ziganka_alert_restore_fusion:
-    alias: "Ziganka: restore Fusion state"
-    sequence:
-      - variables:
-          raw: "{{ states('input_text.fusion_pre_alert_state') }}"
-          snap: "{{ raw | trim | from_json({}) if raw | trim not in ['', 'unknown', 'unavailable'] else {} }}"
-      - choose:
-          - conditions: "{{ snap | length > 0 }}"
-            sequence:
-              - service: rest_command.fusion_set_volume
-                data:
-                  value: "{{ snap.volume | int(8) }}"
-              - service: rest_command.fusion_set_source
-                data:
-                  value: "{{ snap.source if snap.source not in ['unknown','unavailable','none'] else 'source2' }}"
-              - service: rest_command.fusion_set_muted
-                data:
-                  value: "{{ 'true' if snap.muted in [true, 'true', 'True', 'on'] else 'false' }}"
-              - service: rest_command.fusion_set_power
-                data:
-                  value: "{{ snap.power if snap.power in ['on', 'off'] else 'on' }}"
-
-  ziganka_alert_force_fusion:
-    alias: "Ziganka: force Fusion to alert state"
+  # Fusion warn announcement: snapshot -> force AUX/volume -> chime+TTS once -> restore.
+  ziganka_fusion_warn:
+    alias: "Ziganka: Fusion warn announcement"
+    mode: queued
+    max: 3
     fields:
-      priority:
-        description: "emergency | alarm | warning"
-    sequence:
-      - variables:
-          base_volume: >-
-            {% if priority == 'emergency' %}
-              {{ states('input_number.ziganka_vol_emergency') | int(20) }}
-            {% elif priority == 'alarm' %}
-              {{ states('input_number.ziganka_vol_alarm') | int(18) }}
-            {% else %}
-              {{ states('input_number.ziganka_vol_warning') | int(14) }}
-            {% endif %}
-          final_volume: >-
-            {% if is_state('input_boolean.ziganka_night_mode', 'on') %}
-              {{ (base_volume | int * 0.5) | int }}
-            {% else %}
-              {{ base_volume | int }}
-            {% endif %}
-      - service: rest_command.fusion_set_power
-        data: { value: "on" }
-      - service: rest_command.fusion_set_source
-        data: { value: "source2" }   # AUX = source2 on this Fusion
-      - service: rest_command.fusion_set_muted
-        data: { value: "false" }
-      - service: rest_command.fusion_set_volume
-        data:
-          value: "{{ final_volume }}"
-      - delay: { milliseconds: 400 }   # let Fusion settle on new source
-
-  ziganka_alert_play_message:
-    alias: "Ziganka: play chime + TTS"
-    fields:
-      priority:
-        description: "Alert priority"
       message:
-        description: "Spoken message"
+        description: Spoken message
     sequence:
+      # --- Snapshot current Fusion state so we can return to it (e.g. Bluetooth)
+      # after the alert. The Fusion's N2K status read-back works when the unit is
+      # broadcasting PGN 130820; if it's ever empty we degrade gracefully (skip
+      # restore, leave on AUX). prev_source is the short "sourceN" form the
+      # set-source PUT expects (GET returns the full avsource path).
+      - service: rest_command.ziganka_fusion_get
+        response_variable: fus
       - variables:
-          ma_player: "{{ states('input_text.ziganka_ma_player') }}"
-          chime_url: >-
-            {% if priority in ['emergency', 'alarm', 'warning'] %}
-              http://localhost:8123/local/alerts/{{ priority }}.mp3
-            {% else %}
-              none
-            {% endif %}
-
-      - choose:
-          - conditions: "{{ chime_url != 'none' }}"
-            sequence:
-              - service: media_player.play_media
-                target:
-                  entity_id: "{{ ma_player }}"
-                data:
-                  media_content_type: music
-                  media_content_id: "{{ chime_url }}"
-                continue_on_error: true
-              - wait_template: >-
-                  {{ states(ma_player) in ['idle', 'off', 'paused'] }}
-                timeout: "00:00:02"
-                continue_on_timeout: true
-
+          warnvol: "{{ states('input_number.ziganka_fusion_warn_volume') | int(14) }}"
+          c: "{{ fus.content if (fus is defined and fus.content is defined and fus.content is mapping) else {} }}"
+          z: "{{ c.output.zone1 if (c.output is defined and c.output.zone1 is defined) else {} }}"
+          prev_source: >-
+            {{ (z.source.value).split('.')[-1] if (z.source is defined and z.source.value) else '' }}
+          prev_vol: "{{ z.volume.master.value if (z.volume is defined and z.volume.master is defined) else '' }}"
+          prev_power: "{{ c.state.value if (c.state is defined) else '' }}"
+          prev_muted: "{{ z.isMuted.value if (z.isMuted is defined) else false }}"
+          # Only restore if we read a real source that isn't already AUX.
+          can_restore: "{{ prev_source not in ['', 'source2', none] }}"
+      # --- Force the Fusion on, unmuted, to AUX at the warn volume.
+      - service: rest_command.ziganka_fusion_set_power
+        data: { value: "on" }
+      - service: rest_command.ziganka_fusion_set_muted
+        data: { value: "false" }
+      - service: rest_command.ziganka_fusion_set_source
+        data: { value: "source2" }   # source2 = "Aux" (verified)
+      - service: rest_command.ziganka_fusion_set_volume
+        data: { value: "{{ warnvol }}" }
+      # ~2.5 s for the Fusion to engage AUX. MA also auto-prepends its own
+      # attention jingle to the TTS announcement.
+      - delay: { milliseconds: 2500 }
+      # Message spoken twice + "End of warning" terminator. The Snapcast server
+      # buffer was lowered to 250 ms (MA → Snapcast → "Snapserver buffer size") so
+      # the announcement tail is no longer clipped and it plays in full. No chime.
       - service: tts.speak
+        continue_on_error: true
         data:
           entity_id: tts.piper
-          media_player_entity_id: "{{ ma_player }}"
-          message: "{{ priority | capitalize }}: {{ message }}"
+          media_player_entity_id: media_player.halos
+          message: "Warning. {{ message }}. I repeat. Warning. {{ message }}. End of warning."
           cache: false
-        continue_on_error: true
-      - wait_template: >-
-          {{ states(ma_player) in ['idle', 'off', 'paused'] }}
-        timeout: "00:00:10"
-        continue_on_timeout: true
+      # --- Restore the previous source (e.g. Bluetooth) AFTER the announcement.
+      # media_player.halos stays 'idle' during MA announcements, so we can't
+      # wait_template — estimate the spoken duration (~2.3 words/s) + jingle +
+      # margin so the restore never fires mid-announcement (which would cut it).
+      - condition: template
+        value_template: "{{ can_restore }}"
+      - delay:
+          seconds: >-
+            {{ (((7 + 2 * (message.split() | length)) / 2.3) | round(0, 'ceil') | int) + 4 }}
+      # Lower the volume to the snapshot level FIRST (while still on AUX), so when
+      # the source switches back the music doesn't briefly blast at the loud alert
+      # volume.
+      - service: rest_command.ziganka_fusion_set_volume
+        data: { value: "{{ prev_vol | int(warnvol) }}" }
+      - service: rest_command.ziganka_fusion_set_source
+        data: { value: "{{ prev_source }}" }
+      # The Fusion recalls a per-source volume on a source change, which races with
+      # our set; let the switch settle, then re-assert the volume so our value wins.
+      - delay: { milliseconds: 1500 }
+      - service: rest_command.ziganka_fusion_set_muted
+        data: { value: "{{ 'true' if prev_muted in [true, 'true', 'True'] else 'false' }}" }
+      - service: rest_command.ziganka_fusion_set_power
+        data: { value: "{{ prev_power if prev_power in ['on','off'] else 'on' }}" }
+      - service: rest_command.ziganka_fusion_set_volume
+        data: { value: "{{ prev_vol | int(warnvol) }}" }
 
-  ziganka_alert_handle:
-    alias: "Ziganka: handle alert end-to-end"
-    mode: queued
-    max: 5
-    fields:
-      alert_id: { description: "SignalK alert id" }
-      priority: { description: "Alert priority: emergency | alarm | warning | caution" }
-      message: { description: "Alert message" }
-    sequence:
-      - service: input_boolean.turn_on
-        target: { entity_id: input_boolean.ziganka_alert_active }
-
-      # Channel A: phone push (always — Fusion-independent)
-      - service: "{{ states('input_text.ziganka_notify_target') }}"
-        data:
-          title: "⚠ {{ priority | capitalize }}"
-          message: "{{ message }}"
-          data:
-            actions:
-              - action: "ZIGANKA_ACK_{{ alert_id }}"
-                title: "Acknowledge"
-              - action: "ZIGANKA_SILENCE_{{ alert_id }}"
-                title: "Silence"
-            push:
-              sound:
-                name: "default"
-                critical: "{{ 1 if priority in ['emergency', 'alarm'] else 0 }}"
-                volume: "{{ 1.0 if priority == 'emergency' else 0.7 }}"
-        continue_on_error: true
-
-      # Channel B: opportunistic Fusion TTS (caution priority skips audio)
-      - choose:
-          - conditions:
-              - condition: template
-                value_template: "{{ priority != 'caution' }}"
-              - condition: state
-                entity_id: binary_sensor.fusion_reachable
-                state: "on"
-            sequence:
-              - service: script.ziganka_alert_snapshot_fusion
-              - service: script.ziganka_alert_force_fusion
-                data:
-                  priority: "{{ priority }}"
-              - service: script.ziganka_alert_play_message
-                data:
-                  priority: "{{ priority }}"
-                  message: "{{ message }}"
-              - service: script.ziganka_alert_restore_fusion
-        default:
-          - service: system_log.write
-            data:
-              message: "Ziganka: skipping audio (caution priority or Fusion unreachable)"
-              level: info
-
-      - service: input_boolean.turn_off
-        target: { entity_id: input_boolean.ziganka_alert_active }
-
+  # --- Test helpers (use the v2 API; clear afterwards) ---
   ziganka_alert_test:
-    alias: "Ziganka: test alert (warning priority)"
+    alias: "Ziganka: raise self-test notification"
+    fields:
+      level:
+        description: "emergency | alarm | warn"
     sequence:
-      - service: script.ziganka_alert_handle
+      - service: rest_command.ziganka_sk_post_notification
         data:
-          alert_id: "test"
-          priority: "warning"
-          message: "This is a test of the Ziganka alert system."
+          state: "{{ level | default('warn') }}"
+          message: "Ziganka self-test {{ level | default('warn') }}"
+          path: "ziganka.selftest"
+
+  ziganka_alert_test_clear:
+    alias: "Ziganka: clear self-test notification(s)"
+    sequence:
+      - service: rest_command.ziganka_sk_get_notifications
+        response_variable: resp
+      - variables:
+          ids: >-
+            {% set ns = namespace(ids=[]) %}
+            {% for k, v in (resp.content if (resp is defined and resp.content is defined) else {}).items() %}
+              {% if (v.path or '') == 'notifications.ziganka.selftest' %}{% set ns.ids = ns.ids + [v.value.id] %}{% endif %}
+            {% endfor %}
+            {{ ns.ids }}
+      - repeat:
+          for_each: "{{ ids }}"
+          sequence:
+            - service: rest_command.ziganka_sk_clear
+              data: { id: "{{ repeat.item }}" }
 
 
 # -----------------------------------------------------------------------------
-# Automations — wire trigger to handler, ack/silence from push actions
+# Automations
 # -----------------------------------------------------------------------------
 automation:
 
-  - alias: "Ziganka: fire alert handler on new active notification"
-    id: ziganka_alert_fire
-    description: >
-      Triggers when signalk-ha pushes a new notification via sensor.signalk_last_notification.
-      Maps signalk-ha state values (emergency/alarm/warn/alert) to internal priority levels.
-      Ignores normal/nominal clearance events.
+  # --- CRITICAL PATH: buzzer ---
+
+  # Instant ON: react to an emergency/alarm event in the same tick (sub-second),
+  # before the authoritative re-fetch completes. Fail toward sounding.
+  - id: ziganka_buzzer_instant_on
+    alias: "Ziganka: buzzer instant ON"
+    mode: queued
+    max: 20
+    trigger:
+      - platform: event
+        event_type: signalk_ziganka_iii_notification
+    condition:
+      - "{{ trigger.event.data.state in ['emergency','alarm'] }}"
+      - "{{ 'sound' in (trigger.event.data.method or []) }}"
+      - >-
+        {% set m = states('input_text.ziganka_muted_paths') %}
+        {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+        {{ trigger.event.data.path not in muted }}
+    action:
+      - service: switch.turn_on
+        target: { entity_id: switch.ziganka_iii_external_alarm }
+
+  # Authoritative buzzer control. On every notification event (plus a 10 s
+  # backstop and HA start), fetch the live active-set inline and set the relay
+  # ON or OFF accordingly. Both transitions are event-driven and immediate; the
+  # time_pattern bounds the worst case if a delta is ever missed. A failed fetch
+  # yields 'unknown' -> relay is left as-is (the watchdog handles fail-loud).
+  - id: ziganka_buzzer_eval
+    alias: "Ziganka: evaluate buzzer from active-set"
+    mode: queued
+    max: 20
+    trigger:
+      - platform: event
+        event_type: signalk_ziganka_iii_notification
+      - platform: time_pattern
+        seconds: "/10"
+      - platform: homeassistant
+        event: start
+    action:
+      - service: rest_command.ziganka_sk_get_notifications
+        response_variable: resp
+      - variables:
+          notifs: "{{ resp.content if (resp is defined and resp.content is defined) else none }}"
+          muted: >-
+            {% set m = states('input_text.ziganka_muted_paths') %}
+            {{ (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] }}
+          demand: >-
+            {% if notifs is none or notifs is string %}unknown
+            {% else %}
+            {% set ns = namespace(on=false) %}
+            {% for k, v in notifs.items() %}
+              {% set val = v.value %}
+              {% if val.state in ['emergency','alarm'] and 'sound' in (val.method or []) and v.path not in muted %}{% set ns.on = true %}{% endif %}
+            {% endfor %}
+            {{ 'on' if ns.on else 'off' }}
+            {% endif %}
+      - choose:
+          - conditions: "{{ demand | trim == 'on' }}"
+            sequence:
+              - service: switch.turn_on
+                target: { entity_id: switch.ziganka_iii_external_alarm }
+          - conditions: "{{ demand | trim == 'off' }}"
+            sequence:
+              - service: switch.turn_off
+                target: { entity_id: switch.ziganka_iii_external_alarm }
+        # demand == 'unknown' (fetch failed): leave the relay as-is.
+
+  # --- Fusion warn (lower severity) ---
+  - id: ziganka_warn_announce
+    alias: "Ziganka: Fusion warn announcement"
     mode: queued
     max: 5
     trigger:
+      - platform: event
+        event_type: signalk_ziganka_iii_notification
+    condition:
+      - "{{ trigger.event.data.state == 'warn' }}"
+      - "{{ 'sound' in (trigger.event.data.method or []) }}"
+    action:
+      - service: script.ziganka_fusion_warn
+        data:
+          message: "{{ trigger.event.data.message | default('') }}"
+
+  # --- Mute switch (Shelly input) -> acknowledge/silence ---
+  - id: ziganka_mute_pressed
+    alias: "Ziganka: mute switch pressed"
+    mode: queued
+    max: 3
+    trigger:
       - platform: state
-        entity_id: sensor.signalk_last_notification
+        entity_id: binary_sensor.ziganka_iii_external_alarm_input_0
     condition:
-      - condition: template
-        value_template: >-
-          {{ trigger.to_state.attributes.get('state', 'normal')
-             not in ['normal', 'nominal', 'unknown', 'unavailable'] }}
+      # Ignore startup unknown/unavailable transitions; act on any real flip.
+      - "{{ trigger.from_state.state not in ['unknown','unavailable', none] }}"
+      - "{{ trigger.to_state.state not in ['unknown','unavailable', none] }}"
     action:
-      - variables:
-          notif_state: "{{ trigger.to_state.attributes.get('state', 'normal') }}"
-          # Map signalk-ha state values to internal priority levels
-          priority: >-
-            {% set map = {'emergency': 'emergency', 'alarm': 'alarm', 'warn': 'warning', 'alert': 'caution'} %}
-            {{ map.get(notif_state, 'warning') }}
-          alert_id: "{{ trigger.to_state.attributes.get('id', 'unknown') }}"
-          message: "{{ trigger.to_state.attributes.get('message', 'Unknown alert') }}"
-      - service: script.ziganka_alert_handle
-        data:
-          alert_id: "{{ alert_id }}"
-          priority: "{{ priority }}"
-          message: "{{ message }}"
+      - service: script.ziganka_mute
 
-  - alias: "Ziganka: ack alert from phone push"
-    id: ziganka_ack_from_push
+  # --- Clear handler: prune a path from the local-muted set when it clears ---
+  - id: ziganka_clear_prune
+    alias: "Ziganka: prune muted path on clear"
+    mode: queued
+    max: 20
     trigger:
       - platform: event
-        event_type: mobile_app_notification_action
+        event_type: signalk_ziganka_iii_notification
     condition:
-      - condition: template
-        value_template: "{{ trigger.event.data.action.startswith('ZIGANKA_ACK_') }}"
+      - "{{ trigger.event.data.state in ['normal','nominal'] }}"
     action:
-      - service: rest_command.signalk_acknowledge_alert
+      - service: input_text.set_value
+        target: { entity_id: input_text.ziganka_muted_paths }
         data:
-          alert_id: "{{ trigger.event.data.action | replace('ZIGANKA_ACK_', '') }}"
+          value: >-
+            {% set m = states('input_text.ziganka_muted_paths') %}
+            {% set cur = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+            {{ (cur | reject('eq', trigger.event.data.path) | list) | tojson }}
+      - service: homeassistant.update_entity
+        target: { entity_id: binary_sensor.ziganka_buzzer_demand }
 
-  - alias: "Ziganka: silence alert from phone push"
-    id: ziganka_silence_from_push
+  # --- Fail-loud watchdog: Signal K unreachable -> sound the buzzer ---
+  - id: ziganka_watchdog_signalk
+    alias: "Ziganka: fail-loud if Signal K unreachable"
+    mode: single
     trigger:
-      - platform: event
-        event_type: mobile_app_notification_action
-    condition:
-      - condition: template
-        value_template: "{{ trigger.event.data.action.startswith('ZIGANKA_SILENCE_') }}"
+      - platform: state
+        entity_id: binary_sensor.ziganka_signalk_reachable
+        to: "unavailable"
+        for: { seconds: 60 }
+      - platform: state
+        entity_id: binary_sensor.ziganka_signalk_reachable
+        to: "off"
+        for: { seconds: 60 }
     action:
-      - service: rest_command.signalk_silence_alert
+      - service: switch.turn_on
+        target: { entity_id: switch.ziganka_iii_external_alarm }
+      - service: persistent_notification.create
         data:
-          alert_id: "{{ trigger.event.data.action | replace('ZIGANKA_SILENCE_', '') }}"
+          notification_id: ziganka_sk_fault
+          title: "Ziganka ALERT SYSTEM FAULT"
+          message: >-
+            Signal K has been unreachable for over 60 s. The buzzer has been
+            sounded fail-loud because alarm state can no longer be determined.
 
-
-# =============================================================================
-# Lovelace dashboard suggestion (paste as a manual card)
-# =============================================================================
-# type: vertical-stack
-# cards:
-#   - type: glance
-#     entities:
-#       - sensor.signalk_notification_count
-#       - sensor.signalk_last_notification
-#       - binary_sensor.fusion_reachable
-#   - type: entities
-#     title: Last notification
-#     entities:
-#       - sensor.signalk_last_notification
-#   - type: horizontal-stack
-#     cards:
-#       - type: button
-#         tap_action:
-#           action: call-service
-#           service: script.ziganka_alert_test
-#         name: Test
-#         icon: mdi:test-tube
-#   - type: entities
-#     title: Fusion state
-#     entities:
-#       - sensor.fusion_power
-#       - sensor.fusion_source
-#       - sensor.fusion_muted
-#       - sensor.fusion_volume
-#   - type: entities
-#     title: Tunables
-#     entities:
-#       - input_boolean.ziganka_night_mode
-#       - input_number.ziganka_vol_emergency
-#       - input_number.ziganka_vol_alarm
-#       - input_number.ziganka_vol_warning
-#       - input_text.ziganka_ma_player
-#       - input_text.ziganka_notify_target
+  # --- Watchdog: buzzer (Shelly) offline -> can't sound; warn loudly in UI/log ---
+  - id: ziganka_watchdog_shelly
+    alias: "Ziganka: warn if buzzer (Shelly) offline"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: switch.ziganka_iii_external_alarm
+        to: "unavailable"
+        for: { minutes: 1 }
+    action:
+      - service: persistent_notification.create
+        data:
+          notification_id: ziganka_buzzer_fault
+          title: "Ziganka buzzer OFFLINE"
+          message: >-
+            The Shelly buzzer is unreachable — audible alarms cannot sound.
+            Check the Shelly at 192.168.88.227.
+      - service: system_log.write
+        data:
+          level: error
+          message: "Ziganka: Shelly buzzer (switch.ziganka_iii_external_alarm) is unavailable."
