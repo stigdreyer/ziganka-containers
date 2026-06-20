@@ -101,6 +101,11 @@ jobs:
           ⚠️ Our \`apps/signalk-server/\` is a **customized fork** (dirkwa image, docker.sock mount, dynamic DOCKER_GID, \`ziganka-\` paths). Do **not** blindly copy upstream — review the diff above and port only the relevant changes by hand. Merging this PR just advances the tracked upstream ref.
           EOF
           )
+          # Close any stale drift PRs before opening the new one.
+          gh pr list --search "chore/signalk-upstream- in:head" --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"chore/signalk-upstream-\")) | .number" \
+            | xargs -r -I{} gh pr close {} --comment "Superseded by newer drift PR for $LATEST"
+
           if ! gh pr list --head "$BRANCH" --json number --jq '.[0].number' | grep -q .; then
             gh pr create \
               --title "chore: signalk upstream definition drift (${CURRENT:0:12} → ${LATEST:0:12})" \

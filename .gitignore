@@ -22,3 +22,6 @@ __pycache__/
 .idea/
 .vscode/
 *.swp
+
+# Claude Code memory index (local only)
+/MEMORY.md

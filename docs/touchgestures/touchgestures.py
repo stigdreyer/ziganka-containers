@@ -1,30 +1,92 @@
 #!/usr/bin/env python3
 """
-3-finger horizontal gesture daemon for HALPI2 / labwc / Wayland
-Handles Ctrl+Tab / Ctrl+Shift+Tab tab switching — only when Chromium is focused.
-2-finger scroll is handled natively by the display's multitouch mode.
+Touch gesture daemon for HALPI2 / labwc / Wayland (Chromium kiosk).
 
-Confirmed working as of 2026-05-12. Maximize/iconify/show-desktop gestures
-are NOT implemented here — all approaches tried to date have failed.
-See touchgestures.md for a full log of what was attempted.
+Gestures (only when Chromium is focused):
+  - 4-finger horizontal swipe  -> Ctrl+Tab / Ctrl+Shift+Tab (switch tabs)
+  - 5-finger pinch (converge)  -> F11 (toggle Chromium fullscreen)
+2-finger scroll is handled natively by the display's multitouch mode.
+3-finger and vertical/4-finger labwc-native gestures are avoided — labwc 0.9.2
+intercepts 3-finger raw swipes; see touchgestures.md for the full log.
+
+The touchscreen is found by name (TOUCH_NAME_MATCH) because /dev/input/eventN
+numbering shuffles across reboots.
 
 Deploy to: ~/.config/labwc/touchgestures.py
 Autostart: add  python3 ~/.config/labwc/touchgestures.py &  to ~/.config/labwc/autostart
+Keystrokes are injected via uinput (kernel-level virtual keyboard), NOT wtype —
+labwc 0.9.x does not deliver wtype's Wayland virtual keyboard to Chromium. This
+needs /dev/uinput access (a udev rule granting the 'input' group; see
+touchgestures.md). wlrctl (focus check) still needs the Wayland env below.
+
 Run as pi user (must be in 'input' group, or sudo):
   WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 python3 ~/.config/labwc/touchgestures.py
 """
 
 import math
 import subprocess
+import time
 
-from evdev import InputDevice, ecodes
+from evdev import InputDevice, UInput, ecodes, list_devices
 
-DEVICE_PATH     = "/dev/input/event4"
-SWIPE_THRESHOLD = 25.0  # minimum movement (raw units) to register a swipe
+# Find the touchscreen by name — /dev/input/eventN numbering shuffles across
+# reboots (e.g. event4 -> event1), so never hardcode the path.
+TOUCH_NAME_MATCH = "waveshare"   # substring of the device name, case-insensitive
+SWIPE_THRESHOLD  = 25.0          # minimum movement (raw units) to register a swipe
+# 5-finger pinch -> toggle fullscreen. Pinch = fingers converging: the average
+# distance from their centroid shrinks. Tune via the debug output if needed.
+PINCH_FINGERS    = 5
+PINCH_RATIO      = 0.7           # end spread <= 70% of start spread = pinch-in
+MIN_PINCH_SPREAD = 50.0          # min start spread so 5 fingers placed close
+                                 # together don't false-trigger
 
 
-def run(cmd):
-    subprocess.Popen(cmd.split())
+def find_touch_device():
+    """Return the multitouch touchscreen InputDevice, or None.
+
+    Prefers a device whose name matches TOUCH_NAME_MATCH; falls back to any
+    device exposing multitouch (ABS_MT_POSITION_X)."""
+    fallback = None
+    for path in list_devices():
+        try:
+            d = InputDevice(path)
+        except Exception:
+            continue
+        abs_caps = d.capabilities().get(ecodes.EV_ABS, [])
+        codes = [c if isinstance(c, int) else c[0] for c in abs_caps]
+        if ecodes.ABS_MT_POSITION_X not in codes:
+            continue
+        if TOUCH_NAME_MATCH in d.name.lower():
+            return d
+        if fallback is None:
+            fallback = d
+    return fallback
+
+
+# Kernel-level virtual keyboard (created in main). wtype's Wayland virtual
+# keyboard is NOT delivered to Chromium by labwc 0.9.x, so we inject real input
+# events via uinput instead; labwc routes them to the focused window normally.
+# Needs /dev/uinput access (input group; see the udev rule in touchgestures.md).
+UI = None
+
+
+def make_keyboard():
+    caps = {ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL, ecodes.KEY_LEFTSHIFT,
+                            ecodes.KEY_TAB, ecodes.KEY_F11]}
+    return UInput(caps, name="ziganka-gestures")
+
+
+def tap(*keys):
+    """Press keys in order, release in reverse, via the uinput keyboard."""
+    if UI is None:
+        return
+    for k in keys:
+        UI.write(ecodes.EV_KEY, k, 1)
+    UI.syn()
+    time.sleep(0.02)
+    for k in reversed(keys):
+        UI.write(ecodes.EV_KEY, k, 0)
+    UI.syn()
 
 
 def is_browser_focused():
@@ -49,11 +111,18 @@ def gesture_action(fingers, dx, dy):
     if not is_browser_focused():
         return
 
-    if fingers == 3 and adx > ady:
+    if fingers == 4 and adx > ady:
         if dx < 0:
-            run("wtype -M ctrl -k Tab -m ctrl")                   # next tab
+            tap(ecodes.KEY_LEFTCTRL, ecodes.KEY_TAB)                        # next tab
         else:
-            run("wtype -M ctrl -M shift -k Tab -m shift -m ctrl") # previous tab
+            tap(ecodes.KEY_LEFTCTRL, ecodes.KEY_LEFTSHIFT, ecodes.KEY_TAB)  # previous tab
+
+
+def toggle_fullscreen():
+    """5-finger pinch -> F11. Toggles Chromium fullscreen <-> windowed."""
+    if not is_browser_focused():
+        return
+    tap(ecodes.KEY_F11)
 
 
 class TouchPoint:
@@ -80,17 +149,24 @@ class TouchPoint:
 
 
 def main():
-    print(f"Opening device: {DEVICE_PATH}")
-    try:
-        dev = InputDevice(DEVICE_PATH)
-    except Exception as e:
-        print(f"Error opening device: {e}")
-        print("Add user to 'input' group and log back in")
+    global UI
+    dev = find_touch_device()
+    if dev is None:
+        print("No multitouch touchscreen found "
+              "(is the user in the 'input' group?)")
         return
 
-    print(f"Listening for gestures on: {dev.name}")
+    try:
+        UI = make_keyboard()
+        time.sleep(1.0)  # let the compositor register the new keyboard device
+    except Exception as exc:
+        print(f"Could not create uinput keyboard ({exc}); "
+              "is /dev/uinput accessible (input group)?")
+        UI = None
 
-    slots = {i: TouchPoint() for i in range(5)}
+    print(f"Listening for gestures on: {dev.name} ({dev.path})")
+
+    slots = {i: TouchPoint() for i in range(10)}  # Waveshare reports up to 10
     current_slot = 0
     active_slots = set()
     gesture_handled = False
@@ -134,13 +210,35 @@ def main():
                             if s.start_x is not None and not s.active]
 
                 if len(finished) >= 3:
+                    count = len(finished)
                     deltas = [s.delta() for s in finished]
-                    avg_dx = sum(d[0] for d in deltas) / len(deltas)
-                    avg_dy = sum(d[1] for d in deltas) / len(deltas)
-                    dist = math.sqrt(avg_dx**2 + avg_dy**2)
+                    avg_dx = sum(d[0] for d in deltas) / count
+                    avg_dy = sum(d[1] for d in deltas) / count
+                    dist = math.hypot(avg_dx, avg_dy)
 
-                    if dist >= SWIPE_THRESHOLD:
-                        n = min(len(finished), 4)
+                    # 5-finger pinch -> toggle fullscreen (F11).
+                    pinched = False
+                    if count >= PINCH_FINGERS:
+                        sxc = sum(s.start_x for s in finished) / count
+                        syc = sum(s.start_y for s in finished) / count
+                        exc = sum(s.x for s in finished) / count
+                        eyc = sum(s.y for s in finished) / count
+                        start_spread = sum(math.hypot(s.start_x - sxc, s.start_y - syc)
+                                           for s in finished) / count
+                        end_spread = sum(math.hypot(s.x - exc, s.y - eyc)
+                                         for s in finished) / count
+                        ratio = end_spread / start_spread if start_spread else 1.0
+                        print(f"{count}-finger: start_spread={start_spread:.0f} "
+                              f"end_spread={end_spread:.0f} ratio={ratio:.2f}", flush=True)
+                        pinched = (start_spread >= MIN_PINCH_SPREAD
+                                   and ratio <= PINCH_RATIO)
+
+                    if pinched:
+                        print(f"Gesture: {count}-finger pinch -> F11", flush=True)
+                        toggle_fullscreen()
+                        gesture_handled = True
+                    elif dist >= SWIPE_THRESHOLD:
+                        n = min(count, 4)
                         print(f"Gesture: {n} fingers, dx={avg_dx:.1f}, dy={avg_dy:.1f}", flush=True)
                         gesture_action(n, avg_dx, avg_dy)
                         gesture_handled = True
