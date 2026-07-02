@@ -1,13 +1,13 @@
 #!/bin/bash
-# Signal K Server prestart script
-# Creates security.json with default admin user if not exists
-
-set -e
-
-# Derive HALOS_DOMAIN from hostname if not set
-if [ -z "${HALOS_DOMAIN}" ]; then
-    HALOS_DOMAIN="$(hostname -s).local"
-fi
+# Signal K Server app-prestart hook (sourced by the generated framework prestart).
+# OIDC is declarative now (routing.auth.mode: oidc): the framework provisions the
+# client secret, writes the Authelia snippet, and appends SIGNALK_OIDC_CLIENT_SECRET
+# /_ISSUER/_REDIRECT_URI to runtime.env. This hook keeps the Signal K-specific
+# steps: the security.json bootstrap, external-URL advertising, the Ziganka fork's
+# Docker-socket GID resolution, and the InfluxDB logging plugin.
+#
+# Ziganka fork of halos-marine-containers' signalk-server: dirkwa image, host
+# Docker socket mounted into the container, per-host DOCKER_GID, ziganka- paths.
 
 SIGNALK_DATA="${CONTAINER_DATA_ROOT}/data"
 SECURITY_FILE="${SIGNALK_DATA}/security.json"
@@ -57,79 +57,35 @@ EOF
     chmod 600 "${CONTAINER_DATA_ROOT}/admin-password"
 fi
 
-# Generate OIDC client secret if it doesn't exist
-OIDC_SECRET_FILE="${CONTAINER_DATA_ROOT}/oidc-secret"
-if [ ! -f "${OIDC_SECRET_FILE}" ]; then
-    echo "Generating OIDC client secret..."
-    openssl rand -hex 32 > "${OIDC_SECRET_FILE}"
-    chmod 600 "${OIDC_SECRET_FILE}"
-    echo "OIDC client secret stored in ${OIDC_SECRET_FILE}"
-fi
-
-# Resolve the host's Docker socket group GID so the container's group_add
-# works on any boat, not just ones where the docker group happens to be a
-# fixed number. Reading the GID off the socket is more robust than
-# `getent group docker` (handles a differently-named owning group).
+# Resolve the host's Docker socket group GID so the container's group_add works
+# on any boat, not just ones where the docker group happens to be a fixed number.
+# Reading the GID off the socket is more robust than `getent group docker`
+# (handles a differently-named owning group). Consumed by docker-compose.yml
+# group_add — appended to the framework-owned runtime.env below.
 DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
 if [ -z "${DOCKER_GID}" ]; then
     DOCKER_GID="$(getent group docker | cut -d: -f3)"
 fi
 
-# Write runtime env file for systemd to load
-# HALOS_DOMAIN is needed for docker-compose label substitution
-# OIDC settings expand HALOS_DOMAIN since systemd EnvironmentFile doesn't
-RUNTIME_ENV_DIR="/run/container-apps/ziganka-signalk-server-container"
-mkdir -p "${RUNTIME_ENV_DIR}"
-
-# Read external port from port registry (assigned by configure-container-routing)
-EXTERNAL_PORT=""
-PORT_REGISTRY="/etc/halos/port-registry"
-if [ -f "${PORT_REGISTRY}" ]; then
-    EXTERNAL_PORT=$(grep "^signalk-server=" "${PORT_REGISTRY}" 2>/dev/null | cut -d= -f2)
-fi
-
-# EXTERNALHOST strips .local suffix — Signal K's mDNS library (dnssd) appends it
-cat > "${RUNTIME_ENV_DIR}/runtime.env" << EOF
-HALOS_DOMAIN=${HALOS_DOMAIN}
-EXTERNALHOST=${HALOS_DOMAIN%.local}
-EXTERNALPORT=${EXTERNAL_PORT:-443}
-# Requires upstream EXTERNALSSL support: https://github.com/SignalK/signalk-server/pull/2484
-EXTERNALSSL=1
-SIGNALK_OIDC_CLIENT_SECRET=$(cat "${OIDC_SECRET_FILE}")
-SIGNALK_OIDC_ISSUER=https://${HALOS_DOMAIN}/sso
-SIGNALK_OIDC_REDIRECT_URI=https://${HALOS_DOMAIN}/signalk-server/signalk/v1/auth/oidc/callback
-# Docker socket group GID, resolved above — consumed by docker-compose.yml group_add
-DOCKER_GID=${DOCKER_GID}
-EOF
-chmod 600 "${RUNTIME_ENV_DIR}/runtime.env"
-
-# Install OIDC client snippet for Authelia
-# Always written (not guarded) so redirect URIs stay current across upgrades
-OIDC_CLIENTS_DIR="/etc/halos/oidc-clients.d"
-OIDC_CLIENT_SNIPPET="${OIDC_CLIENTS_DIR}/signalk.yml"
-mkdir -p "${OIDC_CLIENTS_DIR}"
-cat > "${OIDC_CLIENT_SNIPPET}" << 'EOF'
-# Signal K OIDC Client Snippet
-# Installed by ziganka-signalk-server-container prestart.sh
-# Authelia's prestart script merges all snippets into oidc-clients.yml
-# Redirect URI uses path redirect (/signalk-server/) which 302s to the port URL
-
-client_id: signalk
-client_name: Signal K Server
-client_secret_file: /var/lib/container-apps/ziganka-signalk-server-container/data/oidc-secret
-redirect_uris:
-  - 'https://${HALOS_DOMAIN}/signalk-server/signalk/v1/auth/oidc/callback'
-scopes: [openid, profile, email, groups]
-consent_mode: implicit
-token_endpoint_auth_method: client_secret_post
-EOF
+# Signal K advertises its external URL via mDNS from these. EXTERNALHOST strips
+# the .local suffix that Signal K's dnssd library re-appends; the external port
+# comes from the routing registry, defaulting to the HTTPS port. Appended to the
+# framework-owned runtime.env (the OIDC vars are written there by the framework).
+EXTERNAL_PORT="$(grep '^signalk-server=' /etc/halos/port-registry 2>/dev/null | cut -d= -f2)"
+{
+    echo "EXTERNALHOST=${HALOS_DOMAIN%.local}"
+    echo "EXTERNALPORT=${EXTERNAL_PORT:-443}"
+    # Requires upstream EXTERNALSSL support: https://github.com/SignalK/signalk-server/pull/2484
+    echo "EXTERNALSSL=1"
+    # Docker socket group GID, resolved above — consumed by docker-compose.yml group_add
+    echo "DOCKER_GID=${DOCKER_GID}"
+} >> "$RUNTIME_ENV"
 
 # --- InfluxDB plugin provisioning ---
 
 INFLUXDB_ENV="/etc/container-apps/marine-influxdb-container/env"
 PLUGIN_CONFIG_DIR="${SIGNALK_DATA}/plugin-config-data"
 PLUGIN_CONFIG="${PLUGIN_CONFIG_DIR}/signalk-to-influxdb2.json"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -f "${INFLUXDB_ENV}" ]; then
     INFLUXDB_ADMIN_TOKEN=$(grep '^INFLUXDB_ADMIN_TOKEN=' "${INFLUXDB_ENV}" | cut -d= -f2-)
