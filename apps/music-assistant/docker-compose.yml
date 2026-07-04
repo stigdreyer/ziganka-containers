@@ -70,11 +70,16 @@ services:
       - ./assets/wait-for-internet.sh:/wait-for-internet.sh:ro
     entrypoint: ["/bin/sh", "/wait-for-internet.sh"]
     # Becomes healthy once /tmp/ready is touched (internet up or timeout reached).
+    # start_period must cover wait-for-internet.sh's own wait (INTERNET_WAIT_TIMEOUT,
+    # default 180s) — otherwise Docker marks this container unhealthy on the very
+    # first 5s check, and `depends_on: condition: service_healthy` treats that as
+    # a hard failure instead of waiting, so MA never gets the benefit of the
+    # script's built-in retry/timeout logic (seen at boot when DNS wasn't up yet).
     healthcheck:
       test: ["CMD-SHELL", "[ -f /tmp/ready ]"]
       interval: 5s
       timeout: 3s
-      start_period: 0s
+      start_period: 190s
       retries: 1
     logging:
       driver: journald

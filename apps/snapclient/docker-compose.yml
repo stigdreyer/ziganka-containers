@@ -2,12 +2,20 @@ services:
   snapclient:
     # Build from the Dockerfile shipped in this package. After install, the
     # build context is /var/lib/container-apps/ziganka-snapclient-container/.
+    # Tag the built image with SNAPCLIENT_VERSION instead of using
+    # `pull_policy: build`: that setting forced a full rebuild — re-resolving
+    # the FROM base image from the registry — on every service start,
+    # including every boot, making snapclient depend on network being up
+    # before the LAN's DNS had settled. With a version-tagged image, Compose
+    # only builds when that tag doesn't exist locally yet (fresh install, or
+    # a version bump from check-snapclient-updates.yml, which updates this
+    # tag alongside the build arg); a plain restart reuses the cached image.
     build:
       context: ./assets
       dockerfile: Dockerfile
       args:
         SNAPCLIENT_VERSION: "0.35.0"
-    pull_policy: build
+    image: ziganka-snapclient:0.35.0
     container_name: snapclient
     init: true
     restart: unless-stopped

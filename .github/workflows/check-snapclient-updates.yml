@@ -45,6 +45,7 @@ jobs:
           sed -i -E "s|^version: ${CURRENT}-[0-9]+|version: ${LATEST}-1|" apps/snapclient/metadata.yaml
           sed -i "s|^upstream_version: ${CURRENT}|upstream_version: ${LATEST}|" apps/snapclient/metadata.yaml
           sed -i "s|SNAPCLIENT_VERSION: \"${CURRENT}\"|SNAPCLIENT_VERSION: \"${LATEST}\"|" apps/snapclient/docker-compose.yml
+          sed -i "s|image: ziganka-snapclient:${CURRENT}|image: ziganka-snapclient:${LATEST}|" apps/snapclient/docker-compose.yml
           sed -i "s|ARG SNAPCLIENT_VERSION=${CURRENT}|ARG SNAPCLIENT_VERSION=${LATEST}|" apps/snapclient/assets/Dockerfile
 
       - name: Open pull request
