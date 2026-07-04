@@ -1,6 +1,6 @@
 name: Snapcast Client
 app_id: snapclient
-version: 0.35.0-2
+version: 0.35.0-3
 upstream_version: 0.35.0
 description: Snapcast client for HDMI audio playback
 long_description: |
