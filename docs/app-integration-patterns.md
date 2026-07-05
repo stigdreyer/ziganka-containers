@@ -101,6 +101,31 @@ calls (must resolve + verify TLS from inside the container). Satisfy both at onc
 `http://localhost:<native-port>` is rock-solid server-side but breaks the
 browser redirect — don't use it if the app needs end-user OAuth.
 
+## Gotcha 5 — `host.containers.internal` doesn't resolve for a host-networked app either
+
+Plugins/sidecars that spawn their own managed containers (e.g. Signal K's
+`signalk-container`-based plugins, like `signalk-questdb`) assume the app
+is a normal bridge-networked container and have it reach ports the sidecar
+publishes on the host via the `host.containers.internal` gateway alias.
+That alias is only auto-injected into containers *the sidecar creates*, not
+into the app's own container — and since the app is host-networked here (not
+bridge-networked), it was never getting that alias at all, so any plugin
+resolving it hits an unresolvable-host error and silently fails (e.g.
+`signalk-questdb` staying stuck reporting "unhealthy").
+
+**Fix:** map the alias to loopback in the app's compose, same idea as Gotcha 1
+— because the app is host-networked, host ports genuinely are its own
+loopback, so this satisfies the plugin's assumption without an actual gateway
+hop:
+
+```yaml
+extra_hosts:
+  - "host.containers.internal:127.0.0.1"
+```
+
+(Signal K shipped this after `signalk-questdb` needed it — see
+`apps/signalk-server/docker-compose.yml`.)
+
 ## SSO / Authelia client registration
 
 HaLOS merges per-app snippets from `/etc/halos/oidc-clients.d/*.yml` into
