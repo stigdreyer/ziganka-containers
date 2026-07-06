@@ -18,6 +18,13 @@ services:
     extra_hosts:
       # Signal K uses host networking so resolves via host DNS/mDNS
       - "${HALOS_DOMAIN}:127.0.0.1"
+      # Plugins (e.g. signalk-questdb via signalk-container) that manage
+      # sidecar containers resolve this alias to reach ports the sidecar
+      # publishes on the host, assuming SK itself is a normal bridge-networked
+      # container. Since SK is host-networked here, host ports ARE its own
+      # loopback, so mapping the alias to 127.0.0.1 satisfies that assumption
+      # without SK actually needing a gateway hop. See docs/app-integration-patterns.md.
+      - "host.containers.internal:127.0.0.1"
     environment:
       - EXTERNALHOST=${EXTERNALHOST:-}
       - EXTERNALPORT=${EXTERNALPORT:-}
