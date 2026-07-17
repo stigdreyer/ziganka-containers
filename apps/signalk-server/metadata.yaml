@@ -4,7 +4,7 @@ app_id: signalk-server
 # is dirkwa's fork on a rolling ":dirkwa" tag (see docker-compose.yml), so this
 # version tracks the packaged *definition*, not the image. upstream_version is
 # the SignalK base the fork derives from.
-version: 2.29.0-zig2
+version: 2.29.0-zig3
 upstream_version: 2.29.0
 description: Signal K server for marine data processing and routing
 long_description: |
