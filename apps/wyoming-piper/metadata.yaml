@@ -1,7 +1,7 @@
 name: Wyoming Piper
 app_id: wyoming-piper
-version: 2.2.2-1
-upstream_version: 2.2.2
+version: 2.3.1-1
+upstream_version: 2.3.1
 description: Local offline text-to-speech engine for Home Assistant
 long_description: |
   Wyoming Piper provides offline neural text-to-speech, exposed over the
