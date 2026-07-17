@@ -101,30 +101,30 @@ calls (must resolve + verify TLS from inside the container). Satisfy both at onc
 `http://localhost:<native-port>` is rock-solid server-side but breaks the
 browser redirect — don't use it if the app needs end-user OAuth.
 
-## Gotcha 5 — `host.containers.internal` doesn't resolve for a host-networked app either
+## Gotcha 5 (historical) — `host.containers.internal` doesn't resolve for a host-networked app either
 
 Plugins/sidecars that spawn their own managed containers (e.g. Signal K's
-`signalk-container`-based plugins, like `signalk-questdb`) assume the app
+`signalk-container`-based plugins, like `signalk-questdb`) may assume the app
 is a normal bridge-networked container and have it reach ports the sidecar
-publishes on the host via the `host.containers.internal` gateway alias.
-That alias is only auto-injected into containers *the sidecar creates*, not
-into the app's own container — and since the app is host-networked here (not
-bridge-networked), it was never getting that alias at all, so any plugin
-resolving it hits an unresolvable-host error and silently fails (e.g.
-`signalk-questdb` staying stuck reporting "unhealthy").
+publishes on the host via the `host.containers.internal` gateway alias. That
+alias is only auto-injected into containers *the sidecar creates*, not into
+the app's own container — so a host-networked app (not bridge-networked)
+never gets it at all, and any plugin resolving it hits an unresolvable-host
+error and silently fails (e.g. `signalk-questdb` staying stuck reporting
+"unhealthy").
 
-**Fix:** map the alias to loopback in the app's compose, same idea as Gotcha 1
-— because the app is host-networked, host ports genuinely are its own
-loopback, so this satisfies the plugin's assumption without an actual gateway
-hop:
+We carried an `extra_hosts: host.containers.internal:127.0.0.1` workaround in
+`signalk-server`'s compose for this (mapping the alias to loopback, since
+under host networking, host ports genuinely are the app's own loopback
+anyway). **Removed** once `signalk-questdb` 1.5.2 fixed it upstream —
+`resolveLanExposureHost` now *probes* `127.0.0.1` before falling back to the
+alias, instead of inferring the host from "is this app containerized" (which
+doesn't distinguish host- from bridge-networked). See
+[signalk-questdb#67](https://github.com/dirkwa/signalk-questdb/issues/67).
 
-```yaml
-extra_hosts:
-  - "host.containers.internal:127.0.0.1"
-```
-
-(Signal K shipped this after `signalk-questdb` needed it — see
-`apps/signalk-server/docker-compose.yml`.)
+Kept here as a reference in case a *different* `signalk-container`-based
+plugin hits the same inference bug and hasn't adopted the probe-based fix —
+the same `extra_hosts` mapping is the workaround if so.
 
 ## SSO / Authelia client registration
 
