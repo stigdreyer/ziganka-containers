@@ -23,6 +23,25 @@ PLUGIN_CONFIG="${PLUGIN_CONFIG_DIR}/signalk-to-influxdb2.json"
 # Create data directory if needed
 mkdir -p "${SIGNALK_DATA}"
 
+# --- refresh the rolling image tag (best-effort, network-dependent) --------
+# The Ziganka fork tracks dirkwa's ":dirkwa" tag (or whatever SIGNALK_IMAGE is
+# set to), which moves forward on every upstream rebuild without the tag
+# itself changing. `docker compose up`'s default pull policy only pulls an
+# image that is missing locally, so once a rolling tag has been pulled once it
+# is never re-checked against the registry -- the container keeps running the
+# same digest indefinitely even as the tag advances upstream (this is why
+# `apt upgrade`, which only updates this package's definition files, does not
+# by itself move Signal K to a newer version). Pulling here, before compose
+# starts, is what makes the rolling tag actually roll. Best-effort and
+# time-boxed: on a boat with no signal this must not delay or fail the boot,
+# so compose falls back to whatever is already cached.
+SIGNALK_IMAGE="${SIGNALK_IMAGE:-ghcr.io/dirkwa/signalk-server:dirkwa}"
+if timeout 120 docker pull "${SIGNALK_IMAGE}" >/dev/null 2>&1; then
+    echo "Pulled latest ${SIGNALK_IMAGE}"
+else
+    echo "WARNING: could not pull ${SIGNALK_IMAGE} (no internet?); using the cached image"
+fi
+
 # --- InfluxDB plugin install (best-effort, network-dependent) --------------
 # The Ziganka fork tracks dirkwa's image, which does not bake the curated
 # plugin set in (unlike upstream's ghcr.io/halos-org/signalk-server-docker).
@@ -36,10 +55,6 @@ if [ -f "${INFLUXDB_ENV}" ]; then
 fi
 
 if [ -n "${INFLUXDB_ADMIN_TOKEN}" ] && [ ! -d "${SIGNALK_DATA}/node_modules/signalk-to-influxdb2" ]; then
-    # Prefer the configured image (SIGNALK_IMAGE from the env file); the
-    # compose `image:` line is now a ${SIGNALK_IMAGE} reference, so grepping
-    # it would yield the literal variable, not a real image.
-    SIGNALK_IMAGE="${SIGNALK_IMAGE:-ghcr.io/dirkwa/signalk-server:dirkwa}"
     echo "Installing signalk-to-influxdb2 plugin (image: ${SIGNALK_IMAGE})..."
     if timeout 120 docker run --rm --entrypoint npm \
         -v "${SIGNALK_DATA}:/home/node/.signalk" \
