@@ -8,54 +8,381 @@
 #
 # Ziganka fork of halos-marine-containers' signalk-server: dirkwa image, host
 # Docker socket mounted into the container, per-host DOCKER_GID, ziganka- paths.
+#
+# The secret-file handling below (security.json, admin-password, the InfluxDB
+# plugin config) is ported from upstream's TOCTOU-hardened rewrite
+# (halos-org/halos-marine-containers, ref d4e0fa1806966f0c51f9620069153683f96d4e36).
+# Our default-data/data/settings.json never shipped the broken gpsd pipeline
+# upstream's migrate_gpsd_liner repairs, so that migration is not ported.
 
 SIGNALK_DATA="${CONTAINER_DATA_ROOT}/data"
 SECURITY_FILE="${SIGNALK_DATA}/security.json"
+PLUGIN_CONFIG_DIR="${SIGNALK_DATA}/plugin-config-data"
+PLUGIN_CONFIG="${PLUGIN_CONFIG_DIR}/signalk-to-influxdb2.json"
 
 # Create data directory if needed
 mkdir -p "${SIGNALK_DATA}"
 
-# Only create security.json if it doesn't exist
-if [ ! -f "${SECURITY_FILE}" ]; then
-    echo "Creating initial security.json with default admin user..."
-
-    # Generate a random password (32 character hex string)
-    ADMIN_PASSWORD=$(openssl rand -hex 16)
-
-    # Hash the password using Python bcrypt (via stdin for robustness)
-    # python3-bcrypt is a dependency of the package
-    HASHED_PASSWORD=$(printf '%s' "${ADMIN_PASSWORD}" | python3 -c "import sys, bcrypt; print(bcrypt.hashpw(sys.stdin.buffer.read(), bcrypt.gensalt()).decode())")
-
-    # Generate a secret key for JWT tokens
-    SECRET_KEY=$(openssl rand -hex 32)
-
-    # Create security.json
-    cat > "${SECURITY_FILE}" << EOF
-{
-  "strategy": "./tokensecurity",
-  "users": [
-    {
-      "username": "admin",
-      "type": "admin",
-      "password": "${HASHED_PASSWORD}"
-    }
-  ],
-  "allow_readonly": true,
-  "secretKey": "${SECRET_KEY}"
-}
-EOF
-
-    # Set proper ownership (match container user - node:node is 1000:1000)
-    chown 1000:1000 "${SECURITY_FILE}"
-
-    echo "Security initialized with admin user."
-    echo "NOTE: Local admin password stored in ${CONTAINER_DATA_ROOT}/admin-password"
-    echo "This is a fallback for emergency access. Use OIDC for regular login."
-
-    # Store the password for emergency recovery
-    echo "${ADMIN_PASSWORD}" > "${CONTAINER_DATA_ROOT}/admin-password"
-    chmod 600 "${CONTAINER_DATA_ROOT}/admin-password"
+# --- InfluxDB plugin install (best-effort, network-dependent) --------------
+# The Ziganka fork tracks dirkwa's image, which does not bake the curated
+# plugin set in (unlike upstream's ghcr.io/halos-org/signalk-server-docker).
+# Install it here if missing; the hardened config write happens below in the
+# python block regardless of whether install succeeded, so a retry lands the
+# config as soon as a later boot manages to install the plugin.
+INFLUXDB_ENV="/etc/container-apps/marine-influxdb-container/env"
+INFLUXDB_ADMIN_TOKEN=""
+if [ -f "${INFLUXDB_ENV}" ]; then
+    INFLUXDB_ADMIN_TOKEN=$(grep '^INFLUXDB_ADMIN_TOKEN=' "${INFLUXDB_ENV}" | cut -d= -f2-)
 fi
+
+if [ -n "${INFLUXDB_ADMIN_TOKEN}" ] && [ ! -d "${SIGNALK_DATA}/node_modules/signalk-to-influxdb2" ]; then
+    # Prefer the configured image (SIGNALK_IMAGE from the env file); the
+    # compose `image:` line is now a ${SIGNALK_IMAGE} reference, so grepping
+    # it would yield the literal variable, not a real image.
+    SIGNALK_IMAGE="${SIGNALK_IMAGE:-ghcr.io/dirkwa/signalk-server:dirkwa}"
+    echo "Installing signalk-to-influxdb2 plugin (image: ${SIGNALK_IMAGE})..."
+    if timeout 120 docker run --rm --entrypoint npm \
+        -v "${SIGNALK_DATA}:/home/node/.signalk" \
+        -u 1000:1000 \
+        "${SIGNALK_IMAGE}" \
+        install --prefix /home/node/.signalk signalk-to-influxdb2; then
+        echo "Plugin installed successfully"
+    else
+        echo "WARNING: Failed to install signalk-to-influxdb2 (no internet?). Will retry on next restart."
+    fi
+fi
+
+# --- secret files -----------------------------------------------------------
+# security.json (admin hash + JWT signing key) and the InfluxDB token config are
+# written by root into a directory this hook hands to uid 1000, so the container
+# -- and any host process running as pi, the same uid -- can put something else
+# at those names first.
+#
+# All of it happens in one python3 block, because the shell cannot express the
+# constraints:
+#
+#   * chmod(2) always dereferences and has no --no-dereference, so converging a
+#     mode is only safe as open(O_NOFOLLOW) + fchmod.
+#   * `set -o noclobber` is NOT O_EXCL. Bash stats the path first and adds
+#     O_EXCL only when that stat fails, so a symlink to a FIFO or a device node
+#     is followed.
+#   * Guarding named paths cannot cover a swapped *parent*, because every
+#     syscall re-resolves the whole path. The parents are opened once here and
+#     everything is *at-relative to those descriptors.
+#   * The predicate is the file type, not "is a symlink": a directory, FIFO,
+#     socket or device at one of these names has to be handled too.
+#   * O_NOFOLLOW refuses a symlink but not a FIFO, and opening a FIFO to read
+#     blocks until a writer appears -- for root as much as anyone. Reads add
+#     O_NONBLOCK and check the type through the descriptor.
+#
+# Refusing to start is the answer when security.json cannot be made safe: an
+# open Signal K is worse than an absent one. That licence is narrow. An abort
+# the container can trigger on demand, or one caused by a fault that redirects
+# nothing, is a permanent outage bought for nothing -- ExecStartPre gets five
+# restarts before systemd stops trying.
+#
+# The token is read before the block so python needs no shell interpolation.
+HALOS_DATA_ROOT="${CONTAINER_DATA_ROOT}" \
+HALOS_SK_DATA="${SIGNALK_DATA}" \
+HALOS_INFLUX_TOKEN="${INFLUXDB_ADMIN_TOKEN}" \
+python3 -P - <<'HALOS_SECRETS_PY'
+import errno, json, os, secrets, stat, sys
+
+DATA_ROOT = os.environ["HALOS_DATA_ROOT"]
+SK_DATA = os.environ["HALOS_SK_DATA"]
+INFLUX_TOKEN = os.environ.get("HALOS_INFLUX_TOKEN") or ""
+
+# A racer that wins once will usually lose the next attempt; one that wins every
+# attempt is not a race we can outlast, and refusing to start is then correct.
+ATTEMPTS = 4
+
+
+def warn(msg):
+    print("WARNING: " + msg, flush=True)
+
+
+def open_dir(path, parent_fd=None):
+    """Pin a directory by descriptor.
+
+    Everything below is *at-relative to this fd, so the parent cannot be swapped
+    between one syscall and the next -- the gap no per-path check can close,
+    because each syscall otherwise re-resolves the whole path.
+    """
+    return os.open(
+        path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+    )
+
+
+def open_regular(dfd, name):
+    """Open an existing regular file for reading, without following or blocking.
+
+    O_NOFOLLOW refuses a symlink but not a FIFO, and a FIFO opened for reading
+    blocks until a writer appears. The type has to be checked through the
+    descriptor: checking the name first would be a different object by the time
+    the open ran.
+    """
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(errno.EINVAL, "not a regular file", name)
+    return fd
+
+
+def move_aside(dfd, name):
+    """Rename a wrong-type directory out of the way, to a name that is free.
+
+    A fixed destination is not free: occupying it makes every rename fail, and
+    aborting on that hands anyone who can write here a permanent boot wedge. A
+    run that already moved one aside collides with its own leftover the same way.
+    """
+    for suffix in [".unexpected"] + [
+        ".unexpected.%s" % secrets.token_hex(4) for _ in range(ATTEMPTS)
+    ]:
+        try:
+            os.rename(name, name + suffix, src_dir_fd=dfd, dst_dir_fd=dfd)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            continue
+        warn("moved aside to %s%s; its contents are intact" % (name, suffix))
+        return True
+    warn("could not move %s aside; every candidate name is taken" % name)
+    return False
+
+
+def clear_unexpected(dfd, name, want_dir=False):
+    """Make `name` absent or the type we need, without following anything.
+
+    Returns True when the name is now safe to create at -- absent, or already the
+    wanted type -- and False only when something is still in the way.
+
+    Root creates only a regular file (or, for the config dir, a directory) at
+    these names, so anything else is tampering or wreckage. A wrong-type
+    directory is renamed rather than deleted: it may hold an operator's data.
+    """
+    try:
+        st = os.lstat(name, dir_fd=dfd)
+    except FileNotFoundError:
+        return True
+
+    if stat.S_ISDIR(st.st_mode) if want_dir else stat.S_ISREG(st.st_mode):
+        return True
+
+    kind = "directory" if stat.S_ISDIR(st.st_mode) else (
+        "symlink" if stat.S_ISLNK(st.st_mode) else "non-regular file"
+    )
+    warn("unexpected %s at %s; clearing it" % (kind, name))
+    if stat.S_ISDIR(st.st_mode):
+        return move_aside(dfd, name)
+    try:
+        os.unlink(name, dir_fd=dfd)
+    except FileNotFoundError:
+        pass  # someone else removed it; absent is the state we wanted
+    except OSError as exc:
+        warn("could not clear %s: %s" % (name, exc))
+        return False
+    return True
+
+
+def create_exclusive(dfd, name, content, mode=0o600):
+    """Create and fill `name`, refusing to follow anything.
+
+    O_EXCL|O_NOFOLLOW is a real kernel exclusive create. Bash's `noclobber` is
+    not equivalent: it stats first and only adds O_EXCL when that stat fails, so
+    a symlink to a FIFO or a device is followed.
+    """
+    fd = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        mode,
+        dir_fd=dfd,
+    )
+    try:
+        os.fchmod(fd, mode)  # explicit: the mode above is masked by umask
+    except BaseException:
+        os.close(fd)
+        raise
+    # UTF-8 explicitly: every caller writes JSON, and text mode would otherwise
+    # encode it in the process locale.
+    with os.fdopen(fd, "w", encoding="utf-8") as f:  # owns fd, including on failure
+        f.write(content)
+
+
+def create_guarded(dfd, name, content, replace=False, mode=0o600):
+    """Clear the name and create it, conceding only after losing repeatedly.
+
+    O_EXCL turns a lost race into EEXIST instead of a write through whatever was
+    planted, which is the point. Treating that EEXIST as fatal would hand the
+    same racer an ExecStartPre failure on demand, so the loss costs a retry.
+
+    `replace` is for a name this hook owns and rewrites rather than creates once:
+    a regenerated secret, whose old file no longer opens anything, and the temp
+    files the atomic writes stage through. Without it the O_EXCL create fails
+    against the hook's own last run -- and `clear_unexpected` will not remove the
+    leftover, because a regular file is exactly the type it wants there.
+    """
+    for _ in range(ATTEMPTS):
+        if not clear_unexpected(dfd, name):
+            return False
+        if replace:
+            try:
+                os.unlink(name, dir_fd=dfd)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                warn("could not replace %s: %s" % (name, exc))
+                return False
+        try:
+            create_exclusive(dfd, name, content, mode)
+            return True
+        except FileExistsError:
+            warn("%s reappeared between the clear and the create; retrying" % name)
+    return False
+
+
+def converge_mode(dfd, name):
+    """Restrict an existing file without re-resolving its path.
+
+    Failing to tighten a mode warrants a warning, never a refusal to boot: on a
+    read-only filesystem, which is how a worn SD card fails, nothing can be
+    redirected anywhere either.
+    """
+    try:
+        fd = open_regular(dfd, name)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        warn("could not open %s to check its mode: %s" % (name, exc))
+        return
+    try:
+        os.fchmod(fd, 0o600)
+    except OSError as exc:
+        warn("could not tighten the mode on %s: %s" % (name, exc))
+    finally:
+        os.close(fd)
+
+
+def configure_influx(sk_fd, token):
+    """Point the logging plugin at InfluxDB. Never fatal; see the call site.
+
+    Writes/updates config only -- installing the plugin itself (docker run npm
+    install) happens in bash before this python block runs, since the Ziganka
+    fork's dirkwa image does not bake the plugin in.
+    """
+    if not clear_unexpected(sk_fd, "plugin-config-data", want_dir=True):
+        warn("cannot make plugin-config-data safe to write; skipping")
+        return
+    try:
+        os.mkdir("plugin-config-data", 0o755, dir_fd=sk_fd)
+    except FileExistsError:
+        pass
+
+    cfg_fd = open_dir("plugin-config-data", parent_fd=sk_fd)
+    try:
+        name = "signalk-to-influxdb2.json"
+        if not clear_unexpected(cfg_fd, name):
+            warn("cannot make %s safe to write; skipping" % name)
+            return
+
+        converge_mode(cfg_fd, name)
+        try:
+            fd = open_regular(cfg_fd, name)
+        except FileNotFoundError:
+            if create_guarded(cfg_fd, name, json.dumps({
+                "enabled": True,
+                "configuration": {"influxes": [{
+                    "url": "http://localhost:8086",
+                    "token": token,
+                    "org": "marine",
+                    "bucket": "marine",
+                    "onlySelf": True,
+                    "resolution": 1000,
+                }]},
+            }, indent=2) + "\n"):
+                print("InfluxDB plugin configured")
+            return
+
+        # Read through the descriptor, not the path: json.load on a re-planted
+        # symlink would copy a root-only file out, and os.replace would then
+        # leave it here owned by uid 1000.
+        with os.fdopen(fd) as f:
+            cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            raise ValueError("config is a %s, not an object" % type(cfg).__name__)
+        influxes = cfg.get("configuration", {}).get("influxes", [])
+        if influxes:
+            influxes[0]["token"] = token
+
+        # `replace` because this name is one the hook owns and rewrites: without
+        # it, a .tmp left by an interrupted run survives clear_unexpected (a
+        # regular file is the wanted type) and every later O_EXCL create fails
+        # EEXIST, so the token is never refreshed again on that device.
+        tmp = name + ".tmp"
+        if not create_guarded(cfg_fd, tmp, json.dumps(cfg, indent=2) + "\n",
+                              replace=True):
+            warn("cannot write %s; leaving the config alone" % tmp)
+            return
+        os.replace(tmp, name, src_dir_fd=cfg_fd, dst_dir_fd=cfg_fd)
+        print("InfluxDB plugin token updated")
+    finally:
+        os.close(cfg_fd)
+
+
+sk_fd = open_dir(SK_DATA)
+root_fd = open_dir(DATA_ROOT)
+
+if not clear_unexpected(sk_fd, "security.json"):
+    sys.exit("ERROR: cannot make security.json safe to write; refusing to start")
+
+converge_mode(sk_fd, "security.json")
+
+# A regular file here means an existing install. Testing only for existence
+# would accept whatever a racer left after the clear above -- a FIFO at this name
+# is not a security configuration, and skipping the create branch on account of
+# it starts Signal K with none.
+try:
+    existing = stat.S_ISREG(os.lstat("security.json", dir_fd=sk_fd).st_mode)
+except FileNotFoundError:
+    existing = False
+
+if not existing:
+    import bcrypt  # only a new install hashes anything
+
+    print("Creating initial security.json with default admin user...")
+    password = secrets.token_hex(16)
+
+    # admin-password goes first. It is emergency access when OIDC is what broke,
+    # and it exists only in memory until it lands -- writing security.json first
+    # and failing here would make every later boot skip this branch, losing the
+    # password for the life of the device. Its parent is root-owned and outside
+    # the bind mount, but it is created the same way so the rule holds by
+    # construction rather than by luck.
+    if not create_guarded(root_fd, "admin-password", password + "\n", replace=True):
+        sys.exit("ERROR: cannot write the emergency admin password; refusing to start")
+
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    if not create_guarded(sk_fd, "security.json", json.dumps({
+        "strategy": "./tokensecurity",
+        "users": [{"username": "admin", "type": "admin", "password": hashed}],
+        "allow_readonly": True,
+        "secretKey": secrets.token_hex(32),
+    }, indent=2) + "\n"):
+        sys.exit("ERROR: cannot make security.json safe to write; refusing to start")
+
+    print("Security initialized with admin user.")
+    print("NOTE: Local admin password stored in %s/admin-password" % DATA_ROOT)
+    print("This is a fallback for emergency access. Use OIDC for regular login.")
+
+# Logging is not navigation: a failure here must not cost the boot.
+if INFLUX_TOKEN:
+    try:
+        configure_influx(sk_fd, INFLUX_TOKEN)
+    except Exception as exc:
+        warn("InfluxDB plugin config not updated: %s" % exc)
+
+os.close(sk_fd)
+os.close(root_fd)
+HALOS_SECRETS_PY
 
 # Resolve the host's Docker socket group GID so the container's group_add works
 # on any boat, not just ones where the docker group happens to be a fixed number.
@@ -81,76 +408,62 @@ EXTERNAL_PORT="$(grep '^signalk-server=' /etc/halos/port-registry 2>/dev/null | 
     echo "DOCKER_GID=${DOCKER_GID}"
 } >> "$RUNTIME_ENV"
 
-# --- InfluxDB plugin provisioning ---
-
-INFLUXDB_ENV="/etc/container-apps/marine-influxdb-container/env"
-PLUGIN_CONFIG_DIR="${SIGNALK_DATA}/plugin-config-data"
-PLUGIN_CONFIG="${PLUGIN_CONFIG_DIR}/signalk-to-influxdb2.json"
-
-if [ -f "${INFLUXDB_ENV}" ]; then
-    INFLUXDB_ADMIN_TOKEN=$(grep '^INFLUXDB_ADMIN_TOKEN=' "${INFLUXDB_ENV}" | cut -d= -f2-)
-
-    if [ -n "${INFLUXDB_ADMIN_TOKEN}" ]; then
-        # Install plugin if not already present
-        if [ ! -d "${SIGNALK_DATA}/node_modules/signalk-to-influxdb2" ]; then
-            # Prefer the configured image (SIGNALK_IMAGE from the env file);
-            # the compose `image:` line is now a ${SIGNALK_IMAGE} reference, so
-            # grepping it would yield the literal variable, not a real image.
-            SIGNALK_IMAGE="${SIGNALK_IMAGE:-ghcr.io/dirkwa/signalk-server:dirkwa}"
-            echo "Installing signalk-to-influxdb2 plugin (image: ${SIGNALK_IMAGE})..."
-            if timeout 120 docker run --rm --entrypoint npm \
-                -v "${SIGNALK_DATA}:/home/node/.signalk" \
-                -u 1000:1000 \
-                "${SIGNALK_IMAGE}" \
-                install --prefix /home/node/.signalk signalk-to-influxdb2; then
-                echo "Plugin installed successfully"
-            else
-                echo "WARNING: Failed to install signalk-to-influxdb2 (no internet?). Will retry on next restart."
-            fi
-        fi
-
-        # Write plugin config (first time only) or update token
-        mkdir -p "${PLUGIN_CONFIG_DIR}"
-        if [ ! -f "${PLUGIN_CONFIG}" ]; then
-            cat > "${PLUGIN_CONFIG}" << PLUGINEOF
-{
-  "enabled": true,
-  "configuration": {
-    "influxes": [
-      {
-        "url": "http://localhost:8086",
-        "token": "${INFLUXDB_ADMIN_TOKEN}",
-        "org": "marine",
-        "bucket": "marine",
-        "onlySelf": true,
-        "resolution": 1000
-      }
-    ]
-  }
+# The container runs as node:node while this script runs as root, so what root
+# creates here has to be handed over. Named paths only: a recursive chown of the
+# data root walks the whole plugin tree (and, on this fork, the InfluxDB plugin
+# installed via `docker run` above) on every boot.
+# -h throughout: these live in a directory the container can write, so following
+# a symlink would let it choose which host path root hands over.
+#
+# Each of these tests a path and then chowns it as a separate command, in a
+# directory the container owns. Removing the file in between makes chown exit
+# non-zero, and under the framework's set -e that is an ExecStartPre failure --
+# so a vanished path warns rather than taking the navigation server down. A path
+# that is gone needs no chown.
+hand_over() {  # $1 = path, $2... = extra chown flags
+    local path="$1"; shift
+    chown -h "$@" 1000:1000 "${path}" ||
+        echo "WARNING: could not hand ${path} to the container"
 }
-PLUGINEOF
-            echo "InfluxDB plugin configured"
-        else
-            # Update token in existing config without overwriting other settings
-            if python3 -c "
-import json, sys
-with open('${PLUGIN_CONFIG}', 'r') as f:
-    cfg = json.load(f)
-influxes = cfg.get('configuration', {}).get('influxes', [])
-if influxes:
-    influxes[0]['token'] = '${INFLUXDB_ADMIN_TOKEN}'
-with open('${PLUGIN_CONFIG}', 'w') as f:
-    json.dump(cfg, f, indent=2)
-"; then
-                echo "InfluxDB plugin token updated"
-            else
-                echo "WARNING: Failed to update InfluxDB token in plugin config"
-            fi
-        fi
-    fi
+
+hand_over "${SIGNALK_DATA}"
+# Unconditional, not inside a create branch: the python block above may have
+# created security.json on this run or on any earlier one, and the container
+# cannot log anyone in through a file it does not own.
+if [ -f "${SECURITY_FILE}" ]; then
+    hand_over "${SECURITY_FILE}"
+fi
+if [ -f "${SIGNALK_DATA}/settings.json" ]; then
+    hand_over "${SIGNALK_DATA}/settings.json"
 fi
 
-# Ensure data directory is owned by node user (UID 1000)
-# settings.json is installed via default-data/ at package install time
-# The container runs as node:node, but prestart runs as root
-chown -R 1000:1000 "${CONTAINER_DATA_ROOT}"
+# The app store installs plugin updates into this tree as uid 1000, and that is
+# the only route by which the InfluxDB plugin (or any other) stays updatable.
+# Non-recursive on purpose: what is already inside belongs to the container.
+#
+# The dangling-symlink case has to be cleared first, and the framework prestart
+# is why: it runs under set -e and sources this hook as a statement, so any
+# non-zero status here fails ExecStartPre and the server never starts. mkdir -p
+# does not create through a dangling symlink -- it exits 1 -- and uid 1000 owns
+# this directory, so leaving one there would wedge the unit on every boot with
+# nothing to clear it. A symlink to a directory that exists is left alone: that
+# is someone relocating the plugin tree to another disk, mkdir -p accepts it,
+# and chown -h then touches the link rather than whatever it points at.
+if [ -L "${SIGNALK_DATA}/node_modules" ] && [ ! -e "${SIGNALK_DATA}/node_modules" ]; then
+    rm -f "${SIGNALK_DATA}/node_modules"
+fi
+# The chown belongs inside the success branch. Tolerating the mkdir and then
+# chowning unconditionally would trade one abort for another -- chown on a path
+# that does not exist is itself non-zero -- turning "the server runs, plugin
+# updates are broken" back into "the server never starts".
+if mkdir -p "${SIGNALK_DATA}/node_modules"; then
+    hand_over "${SIGNALK_DATA}/node_modules"
+else
+    echo "WARNING: could not create ${SIGNALK_DATA}/node_modules; plugin updates will fail"
+fi
+if [ -f "${SIGNALK_DATA}/package.json" ]; then
+    hand_over "${SIGNALK_DATA}/package.json"
+fi
+if [ -d "${PLUGIN_CONFIG_DIR}" ]; then
+    hand_over "${PLUGIN_CONFIG_DIR}" -R
+fi
