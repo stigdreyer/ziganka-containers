@@ -33,10 +33,10 @@ Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0
 Conflicts: boat-homeassistant-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-homeassistant-container_2026.7.4-32_all.deb
-Size: 15952
-MD5sum: 093f3bff594033ced44c94ff3d07a750
-SHA1: 74ad7865b0615be22d98f0ab90cc6a42f89f89b4
-SHA256: bed0140adecd542ff9b7c91fa55a37802f45319dc3334402d9d8cb6e004b098f
+Size: 15950
+MD5sum: 503f4d5e9589de5b179dd9b4aab1bf10
+SHA1: 57d333238d0952f75c6d0dbc800f1bde82512e7d
+SHA256: 4182a8ace25f14634bfab58cc90e89d88af70ca6f4b5cf2c94a7f40fdd25ddda
 Section: web
 Priority: optional
 Homepage: https://www.home-assistant.io/
@@ -62,10 +62,10 @@ Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0
 Conflicts: boat-music-assistant-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-music-assistant-container_2.9.13-34_all.deb
-Size: 14672
-MD5sum: 335cc010c93808005f913eb1741e4ddf
-SHA1: b2eb3bbe07067cfd0607ca59117952edac6e93b3
-SHA256: f6630fd55b63ca050eab0547abc3b460c9d068a5b9e606fac67a5e193700611e
+Size: 14674
+MD5sum: 520a6831eff98290447f31b25c407956
+SHA1: 9fb4003e2ff1c7d1a82c6217c21fe18b919f5cdb
+SHA256: cf271433d635d2c259ad03199ddecf591867f49ef332e3bd6db7f99063f583fe
 Section: sound
 Priority: optional
 Homepage: https://www.music-assistant.io/
@@ -92,10 +92,10 @@ Installed-Size: 64
 Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0), docker.io (>= 20.10) | docker-ce (>= 20.10)
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-ona-plotter-container_0.0.0+git20260520.347afb4-2_all.deb
-Size: 19712
-MD5sum: 40f98354024c2735aeaf78b81635f69e
-SHA1: 885379cfa92cd55345d6ed6e9bc9a4b2887f8281
-SHA256: 85e1206333955b9448a9bc7f0c0a2a9a0e203e27843f12199dbabad97d20c50c
+Size: 19718
+MD5sum: f8f95aedb2475a4ee27280f0bcfaaf23
+SHA1: 8b13dd71c6207379d513eb82a5d3a5b63782a2c8
+SHA256: 844a3387eecfe602173fb4535c3573abe8774f50d41d4b2d5b45129581842754
 Section: web
 Priority: optional
 Homepage: https://github.com/msallin/ona-plotter
@@ -119,17 +119,17 @@ Description: Touch-first SignalK chartplotter
 Tag: role::container-app, field::ziganka, category::navigation, interface::web, use::monitoring, x-display-name::OnaPlotter
 
 Package: ziganka-signalk-server-container
-Version: 2.31.0-10
+Version: 2.31.0-11
 Architecture: all
 Maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
 Installed-Size: 90
 Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0), docker.io (>= 20.10) | docker-ce (>= 20.10), python3-bcrypt
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
-Filename: pool/main/ziganka-signalk-server-container_2.31.0-10_all.deb
-Size: 27298
-MD5sum: ef0adcdc1ce0dc2448f17d478f8b244d
-SHA1: a27675d58cf13a0eefe4cf52b1c09953a4b84499
-SHA256: 9125492eea6f21a42bd5f0f8e4e783acb08091afc97bde58c39f1d8a8bf1f946
+Filename: pool/main/ziganka-signalk-server-container_2.31.0-11_all.deb
+Size: 27284
+MD5sum: 027bba334df23565b88992f3919dbe3d
+SHA1: 239dbeba178a8f4b5c1077f17fe39d62e87c2e11
+SHA256: 125b9ef0ae96307e43b7d9706a9dc0a91f2b43ec217ae43b526442d4d3848620
 Section: net
 Priority: optional
 Homepage: https://signalk.org/
@@ -154,10 +154,10 @@ Installed-Size: 60
 Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0), docker.io (>= 20.10) | docker-ce (>= 20.10), ziganka-music-assistant-container
 Conflicts: boat-snapclient-container
 Filename: pool/main/ziganka-snapclient-container_0.35.0-21_all.deb
-Size: 14472
-MD5sum: 92c2a41b6144e0c27737d7c53e26e4a1
-SHA1: b55635c1bcc294800b6dfa4657ae8f2a225d6b47
-SHA256: 1af323b7fba0efeb7eaac4a041ff354590a109b1ab0175577fa4f10a6d833c14
+Size: 14470
+MD5sum: 573cc15472e89bdb8ac1d7e905f0e451
+SHA1: 5e33942628f05b93e54a946f21812cba418e3ea3
+SHA256: d15ff643058072f3176b3ea9817a45f069e0d73f5fd0f97d061173ea9cf0601c
 Section: sound
 Priority: optional
 Homepage: https://github.com/badaix/snapcast
@@ -176,10 +176,10 @@ Maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
 Installed-Size: 51
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Filename: pool/main/ziganka-wyoming-piper-container_2.4.2-4_all.deb
-Size: 14474
-MD5sum: c60ccd1b3bea83b935bc1febcb28d767
-SHA1: 337de5957c511bddfa94d8335831b7458a662ec4
-SHA256: 7b8dfcd96df1b651c2179be25f2f9d974fc74ab83847579a926212bd3d0f6256
+Size: 14486
+MD5sum: 3c9f94de7771fc17b5568bc0310364a5
+SHA1: 25847751510c7dd104054fd7ccd8b3794a077165
+SHA256: 913227d1cc63d8be6f846a3c40e34dda692b2d6b1d2f3daecd9b3f3c87679fac
 Section: sound
 Priority: optional
 Homepage: https://github.com/rhasspy/wyoming-piper
