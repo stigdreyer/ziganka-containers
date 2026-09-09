@@ -10,10 +10,16 @@
 # Docker socket mounted into the container, per-host DOCKER_GID, ziganka- paths.
 #
 # The secret-file handling below (security.json, admin-password, the InfluxDB
-# plugin config) is ported from upstream's TOCTOU-hardened rewrite
-# (halos-org/halos-marine-containers, ref d4e0fa1806966f0c51f9620069153683f96d4e36).
-# Our default-data/data/settings.json never shipped the broken gpsd pipeline
-# upstream's migrate_gpsd_liner repairs, so that migration is not ported.
+# plugin config, the QuestDB history-provider config) is ported from upstream's
+# TOCTOU-hardened rewrite (halos-org/halos-marine-containers, ref
+# 03c7bd716d148ad40b1fe7f4084b3643179ec2f2). Our default-data/data/settings.json
+# never shipped the broken gpsd pipeline upstream's migrate_gpsd_liner repairs,
+# so that migration is not ported. Ziganka has no marine-questdb-container app
+# (see apps table in CLAUDE.md), so QUESTDB_INSTALLED is always false here —
+# configure_questdb never runs, and clear_gone_default_history_provider is
+# dead-simple insurance against a stray settings.json key rather than an active
+# cleanup path. Ported anyway so a QuestDB app, if ever added, needs no prestart
+# change to be picked up.
 
 SIGNALK_DATA="${CONTAINER_DATA_ROOT}/data"
 SECURITY_FILE="${SIGNALK_DATA}/security.json"
@@ -52,6 +58,22 @@ INFLUXDB_ENV="/etc/container-apps/marine-influxdb-container/env"
 INFLUXDB_ADMIN_TOKEN=""
 if [ -f "${INFLUXDB_ENV}" ]; then
     INFLUXDB_ADMIN_TOKEN=$(grep '^INFLUXDB_ADMIN_TOKEN=' "${INFLUXDB_ENV}" | cut -d= -f2-)
+fi
+
+# The compose file, not the env file. `apt remove` leaves a package in
+# `deinstall ok config-files`: /etc/container-apps/marine-questdb-container/env
+# and the systemd unit both survive, and only `apt purge` takes them. The
+# compose file is payload and goes on either. Gating on env made "the app is
+# gone" false for the ordinary uninstall, which left settings.json naming a
+# provider that can never register -- and that is a standing warn notification,
+# not a quiet fallback. Verified on a device (upstream).
+#
+# No marine-questdb-container app exists in this store yet, so this is always
+# empty on Ziganka -- see the file header.
+QUESTDB_COMPOSE="/var/lib/container-apps/marine-questdb-container/docker-compose.yml"
+QUESTDB_INSTALLED=""
+if [ -f "${QUESTDB_COMPOSE}" ]; then
+    QUESTDB_INSTALLED=1
 fi
 
 if [ -n "${INFLUXDB_ADMIN_TOKEN}" ] && [ ! -d "${SIGNALK_DATA}/node_modules/signalk-to-influxdb2" ]; then
@@ -100,16 +122,22 @@ fi
 HALOS_DATA_ROOT="${CONTAINER_DATA_ROOT}" \
 HALOS_SK_DATA="${SIGNALK_DATA}" \
 HALOS_INFLUX_TOKEN="${INFLUXDB_ADMIN_TOKEN}" \
+HALOS_QUESTDB_INSTALLED="${QUESTDB_INSTALLED}" \
 python3 -P - <<'HALOS_SECRETS_PY'
 import errno, json, os, secrets, stat, sys
 
 DATA_ROOT = os.environ["HALOS_DATA_ROOT"]
 SK_DATA = os.environ["HALOS_SK_DATA"]
 INFLUX_TOKEN = os.environ.get("HALOS_INFLUX_TOKEN") or ""
+QUESTDB_INSTALLED = bool(os.environ.get("HALOS_QUESTDB_INSTALLED"))
 
 # A racer that wins once will usually lose the next attempt; one that wins every
 # attempt is not a race we can outlast, and refusing to start is then correct.
 ATTEMPTS = 4
+
+# Declared in the plugin's own code, not derived from its package name, and it is
+# the key the history provider registry and settings.json both index by.
+QUESTDB_PLUGIN_ID = "signalk-questdb-history-provider"
 
 
 def warn(msg):
@@ -277,6 +305,163 @@ def converge_mode(dfd, name):
         os.close(fd)
 
 
+def read_settings(sk_fd):
+    """Parse settings.json into (settings, mode, original), None when absent.
+
+    Both writers below need the same three things, and each of them is a way to
+    corrupt a value neither writer was asked to touch. The mode is the permission
+    bits uid 1000 chose, kept because root recreates the file. UTF-8 is explicit
+    because settings.json is UTF-8 by specification while text mode would decode
+    it in the process locale -- under a single-byte locale a vessel name comes
+    back as two characters that json.dumps then re-escapes.
+    """
+    try:
+        fd = open_regular(sk_fd, "settings.json")
+    except FileNotFoundError:
+        return None  # a fresh install has none until the postinst seeds default-data
+
+    with os.fdopen(fd, encoding="utf-8") as f:  # owns fd from here
+        # Permission bits only. S_IMODE keeps setuid and setgid as well -- root
+        # would otherwise reproduce them on a file it creates here.
+        mode = stat.S_IMODE(os.fstat(f.fileno()).st_mode) & 0o777
+        original = f.read()
+
+    settings = json.loads(original)
+    if not isinstance(settings, dict):
+        raise ValueError(
+            "settings.json is a %s, not an object" % type(settings).__name__
+        )
+    return settings, mode, original
+
+
+def write_settings(sk_fd, settings, mode):
+    """Replace settings.json atomically. False when the staged write failed."""
+    # Not settings.json.tmp: that is the name the server's own atomic write stages
+    # through, so a leftover there is a root-owned file in its way and its next
+    # save fails EACCES.
+    tmp = "settings.json.halos-tmp"
+    body = json.dumps(settings, indent=2) + "\n"
+    if not create_guarded(sk_fd, tmp, body, replace=True, mode=mode):
+        return False
+    # renameat replaces the name and never follows it, so a symlink swapped in
+    # after the read above is overwritten rather than written through.
+    os.replace(tmp, "settings.json", src_dir_fd=sk_fd, dst_dir_fd=sk_fd)
+    return True
+
+
+def open_plugin_config_dir(sk_fd):
+    """Descriptor for plugin-config-data, or None when it cannot be made safe.
+
+    Both plugin configs (InfluxDB, QuestDB) land here, in a directory uid 1000
+    owns, so the type check and the mkdir live in one place. Two copies of this
+    could drift, and the half that drifted would write a config through
+    whatever was planted at that name.
+    """
+    if not clear_unexpected(sk_fd, "plugin-config-data", want_dir=True):
+        warn("cannot make plugin-config-data safe to write; skipping")
+        return None
+    try:
+        os.mkdir("plugin-config-data", 0o755, dir_fd=sk_fd)
+    except FileExistsError:
+        pass
+    return open_dir("plugin-config-data", parent_fd=sk_fd)
+
+
+def configure_questdb(sk_fd):
+    """Point the history provider at the QuestDB app. Never fatal.
+
+    Written once and then left alone, unlike the InfluxDB config below. That one
+    is rewritten every boot because a rotating token has to reach it; this one
+    carries no secret, so a rewrite could only ever discard what the operator
+    changed -- path filters, sampling rates, retention.
+
+    Host and ports are written explicitly even though they are the plugin's
+    defaults. A rebase onto a new upstream may move those defaults, and a
+    device's configuration should not follow silently.
+
+    Dead on Ziganka today -- there is no marine-questdb-container app in this
+    store, so QUESTDB_INSTALLED is always false and this never runs. Ported so
+    adding that app later needs no prestart change.
+    """
+    cfg_fd = open_plugin_config_dir(sk_fd)
+    if cfg_fd is None:
+        return
+    try:
+        name = QUESTDB_PLUGIN_ID + ".json"
+        if not clear_unexpected(cfg_fd, name):
+            warn("cannot make %s safe to write; skipping" % name)
+            return
+
+        converge_mode(cfg_fd, name)
+        try:
+            fd = open_regular(cfg_fd, name)
+        except FileNotFoundError:
+            pass
+        else:
+            os.close(fd)
+            return
+
+        if create_guarded(cfg_fd, name, json.dumps({
+            "enabled": True,
+            "configuration": {
+                "questdbHost": "127.0.0.1",
+                "questdbHttpPort": 9000,
+                "questdbIlpPort": 9009,
+            },
+        }, indent=2) + "\n"):
+            print("QuestDB history provider configured")
+    finally:
+        os.close(cfg_fd)
+
+
+def clear_gone_default_history_provider(sk_fd, installed):
+    """Drop settings.json's default history provider when its app is gone.
+
+    Only that. Installing the QuestDB app does not make it the default, because
+    naming it would take the slot from whatever is already serving history on
+    that device -- and on a device that has run InfluxDB since before QuestDB
+    existed, the key is absent not because nobody chose but because there was
+    never anything to choose between. The operator picks, in the admin UI under
+    Apps & Plugins -> Configuration, and Signal K records the first provider to
+    register on a device that has never had one (SignalK/signalk-server#2981).
+
+    A key naming a gone provider is a standing alarm rather than a fallback: the
+    first history request after the app is removed raises a warn notification at
+    notifications.server.history.defaultProvider ("Configured default history
+    provider ... is not available"), and the server clears it only when that
+    provider registers again, which for an uninstalled app is never. Verified on
+    a device (upstream). Hence this one direction.
+
+    Exact match only. Any other value is the operator's, and the only value this
+    removes is one naming the app that just went away.
+
+    Always called with installed=False on Ziganka (no QuestDB app exists here),
+    so this only ever matters if a settings.json carried over from a device that
+    once had upstream's QuestDB app names it as the default.
+    """
+    if installed:
+        return
+    read = read_settings(sk_fd)
+    if read is None:
+        return
+    settings, mode, _ = read
+
+    history = settings.get("historyApi")
+    if not isinstance(history, dict):
+        # Absent, or malformed and not root's to interpret.
+        return
+
+    if history.get("defaultProvider") != QUESTDB_PLUGIN_ID:
+        return
+    del history["defaultProvider"]
+
+    settings["historyApi"] = history
+    if write_settings(sk_fd, settings, mode):
+        print("QuestDB is gone; cleared it as the default history provider")
+    else:
+        warn("could not clear the default history provider")
+
+
 def configure_influx(sk_fd, token):
     """Point the logging plugin at InfluxDB. Never fatal; see the call site.
 
@@ -284,15 +469,9 @@ def configure_influx(sk_fd, token):
     install) happens in bash before this python block runs, since the Ziganka
     fork's dirkwa image does not bake the plugin in.
     """
-    if not clear_unexpected(sk_fd, "plugin-config-data", want_dir=True):
-        warn("cannot make plugin-config-data safe to write; skipping")
+    cfg_fd = open_plugin_config_dir(sk_fd)
+    if cfg_fd is None:
         return
-    try:
-        os.mkdir("plugin-config-data", 0o755, dir_fd=sk_fd)
-    except FileExistsError:
-        pass
-
-    cfg_fd = open_dir("plugin-config-data", parent_fd=sk_fd)
     try:
         name = "signalk-to-influxdb2.json"
         if not clear_unexpected(cfg_fd, name):
@@ -394,6 +573,21 @@ if INFLUX_TOKEN:
         configure_influx(sk_fd, INFLUX_TOKEN)
     except Exception as exc:
         warn("InfluxDB plugin config not updated: %s" % exc)
+
+if QUESTDB_INSTALLED:
+    try:
+        configure_questdb(sk_fd)
+    except Exception as exc:
+        warn("QuestDB plugin config not written: %s" % exc)
+
+# Unconditional, unlike the plugin config above: this runs to clear the key on
+# a device the app was removed from, which is a state only reachable with
+# QUESTDB_INSTALLED false. Separate from the config for the rest -- they fail
+# for different reasons, and history still works when only a stale key remains.
+try:
+    clear_gone_default_history_provider(sk_fd, QUESTDB_INSTALLED)
+except Exception as exc:
+    warn("default history provider not cleared: %s" % exc)
 
 os.close(sk_fd)
 os.close(root_fd)
