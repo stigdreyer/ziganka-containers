@@ -22,7 +22,8 @@ alarm logic. Routing is severity-driven.
 | emergency  | ✓ continuous          | –                    |
 | alarm      | ✓ continuous          | –                    |
 | warn       | –                     | ✓ once               |
-| alert      | – (ignored)           | –                    |
+| alert      | – (ignored)           | – (except radar ↓)   |
+| alert, radar guard zone | –          | ✓ once, throttled    |
 
 `normal`/`nominal` = cleared. The visual (LED) channel and mobile push are **out of scope in v1**.
 
@@ -61,6 +62,20 @@ gated on `method` containing `"sound"`, but a visual-only alarm then stayed sile
     word). Set **Settings → Devices & Services → Music Assistant → Snapcast → "Snapserver buffer
     size" → `250`** (default is `1000`). This lives in MA's config, *not* this package — if MA is
     reinstalled/reset, re-apply it or the warn announcement will clip again.
+  - **⚠ Required MA setting (else announcements are quiet):** MA scales announcement volume from
+    the player's current volume (and caps it), so with the halos player at e.g. 20% the Fusion AUX
+    gets a weak line signal. Set **MA → Settings → Players → halos (Snapcast) → announcements:
+    volume strategy `Absolute`, volume `100`** (and max `100` if shown). Loudness is then set only
+    by the Fusion (`input_number.ziganka_fusion_warn_volume`). Lives in MA's config — re-apply after
+    an MA reset.
+- **Radar guard zone:** Mayara raises `notifications.radar.<radar>.guardZone.<n>` with state
+  **`alert`**, once *per target* that enters the zone (message e.g. *"Radar nav6820A guard zone 1:
+  target 42 acquired"*), and clears it to `normal` when the zone is empty. Because routing
+  ignores `alert`, radar gets its own automation (`ziganka_radar_announce`). It speaks *"Warning.
+  Radar target in guard zone 1, range A…"* on the Fusion using the same warn script (with the same
+  snapshot and restore). It never sounds the buzzer. A global cooldown
+  (`input_number.ziganka_radar_announce_cooldown`, default 60 s) stops a busy anchorage from
+  producing back-to-back announcements.
 - **Fail-loud reliability:** if Signal K becomes unreachable for 60 s the buzzer is sounded
   (verified: ~85 s end-to-end) and a persistent notification is raised; if the Shelly goes
   offline a UI/log alert is raised. The critical buzzer path depends only on `signalk_ha` + the
@@ -106,8 +121,9 @@ gated on `method` containing `"sound"`, but a visual-only alarm then stayed sile
 | Mute switch | `binary_sensor.ziganka_iii_external_alarm_input_0` |
 | Fusion/MA player | `media_player.halos` |
 | TTS | `tts.piper` |
-| Diagnostics | `binary_sensor.ziganka_buzzer_demand`, `binary_sensor.ziganka_signalk_reachable`, `sensor.ziganka_alarm_highest` |
+| Diagnostics | `binary_sensor.ziganka_buzzer_demand`, `binary_sensor.ziganka_signalk_reachable`, `sensor.ziganka_alarm_highest`, `sensor.ziganka_alarm_cause` (message + Signal K path of the top active alarm — shows *why* in the Logbook) |
 | Tunable | `input_number.ziganka_fusion_warn_volume` (default 14, Fusion 0–24 scale) |
+| Tunable | `input_number.ziganka_radar_announce_cooldown` (default 60 s between radar announcements) |
 
 Fusion AUX input = **`source2`** ("Aux") on this device (`GET …/entertainment/device/fusion1/avsource`).
 
@@ -140,6 +156,9 @@ From HA → Developer Tools → Actions (or the API):
 - `script.ziganka_alert_test` with `level: alarm` / `emergency` → **buzzer sounds**.
 - Flip the physical **mute switch** (or call `script.ziganka_mute`) → buzzer stops, Signal K
   shows the notification `acknowledged`.
+- `script.ziganka_alert_test` with `level: alert`, `path: radar.selftest.guardZone.1` → Fusion
+  speaks *"Radar target in guard zone 1"*, **no buzzer**. (A second test within the cooldown is
+  silent by design.)
 - `script.ziganka_alert_test_clear` → clears the self-test notification(s).
 
 Synthetic notification directly via the API (needs the token):

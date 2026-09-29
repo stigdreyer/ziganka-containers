@@ -12,7 +12,11 @@
 #   emergency   ✓ continuous        –
 #   alarm       ✓ continuous        –
 #   warn        –                   ✓ once
-#   alert       – (ignored)         –
+#   alert       – (ignored)         –   (exception: radar guard zone -> ✓ once, throttled)
+#
+# Radar: Mayara raises `notifications.radar.<radar>.guardZone.<n>` as state
+# `alert` once PER TARGET that enters a guard zone. Those are announced on the
+# Fusion (never the buzzer), rate-limited by input_number.ziganka_radar_announce_cooldown.
 #
 # The buzzer is METHOD-INDEPENDENT (fail-safe): any active alarm/emergency sounds
 # it unless that notification is silenced or acknowledged in Signal K (a safety
@@ -56,6 +60,17 @@ input_number:
     step: 1
     initial: 14
     icon: mdi:volume-high
+
+  ziganka_radar_announce_cooldown:
+    # Minimum gap between radar guard-zone announcements. Mayara alerts once per
+    # acquired target, so a busy anchorage would otherwise announce back-to-back.
+    name: Radar guard-zone announce cooldown
+    min: 0
+    max: 600
+    step: 10
+    initial: 60
+    unit_of_measurement: s
+    icon: mdi:radar
 
 
 # -----------------------------------------------------------------------------
@@ -107,6 +122,23 @@ rest:
             {% endif %}
           {% endfor %}
           {{ ns.best }}
+      # WHY it is alarming: message + Signal K path of the top active notification.
+      # State changes land in the HA Logbook/activity feed, so the cause is visible
+      # next to the buzzer entries (Highest only carries the severity).
+      - name: "Ziganka Alarm Cause"
+        unique_id: ziganka_alarm_cause
+        value_template: >-
+          {% set order = {'emergency':4,'alarm':3,'warn':2,'alert':1} %}
+          {% set ns = namespace(rank=0, txt='none') %}
+          {% for v in (value_json.values() if value_json else []) %}
+            {% set val = v.value %}
+            {% set st = val.status or {} %}
+            {% if val.state in order and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and order[val.state] > ns.rank %}
+              {% set ns.rank = order[val.state] %}
+              {% set ns.txt = (val.message or 'no message') ~ ' [' ~ (v.path | replace('notifications.', '')) ~ ']' %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.txt[:250] }}
 
 
 # -----------------------------------------------------------------------------
@@ -250,6 +282,7 @@ script:
           entity_id:
             - binary_sensor.ziganka_buzzer_demand
             - sensor.ziganka_alarm_highest
+            - sensor.ziganka_alarm_cause
 
   # Fusion warn announcement: snapshot -> force AUX/volume -> chime+TTS once -> restore.
   ziganka_fusion_warn:
@@ -331,13 +364,15 @@ script:
     alias: "Ziganka: raise self-test notification"
     fields:
       level:
-        description: "emergency | alarm | warn"
+        description: "emergency | alarm | warn | alert"
+      path:
+        description: "Notification path (default ziganka.selftest; radar.selftest.guardZone.1 + level alert tests the radar announcement)"
     sequence:
       - service: rest_command.ziganka_sk_post_notification
         data:
           state: "{{ level | default('warn') }}"
           message: "Ziganka self-test {{ level | default('warn') }}"
-          path: "ziganka.selftest"
+          path: "{{ path | default('ziganka.selftest') }}"
 
   ziganka_alert_test_clear:
     alias: "Ziganka: clear self-test notification(s)"
@@ -348,7 +383,7 @@ script:
           ids: >-
             {% set ns = namespace(ids=[]) %}
             {% for k, v in (resp.content if (resp is defined and resp.content is defined) else {}).items() %}
-              {% if (v.path or '') == 'notifications.ziganka.selftest' %}{% set ns.ids = ns.ids + [v.value.id] %}{% endif %}
+              {% if (v.path or '') in ['notifications.ziganka.selftest', 'notifications.radar.selftest.guardZone.1'] %}{% set ns.ids = ns.ids + [v.value.id] %}{% endif %}
             {% endfor %}
             {{ ns.ids }}
       - repeat:
@@ -451,6 +486,35 @@ automation:
       - service: script.ziganka_fusion_warn
         data:
           message: "{{ trigger.event.data.message | default('') }}"
+
+  # --- Radar guard zone (Mayara, state `alert`) -> Fusion announcement ---
+  # A deliberate exception to "alert is ignored": a new radar target is worth
+  # hearing, but not worth the buzzer. Mayara fires once per acquired target, so
+  # announcements are rate-limited (global, not per zone) by the cooldown helper.
+  - id: ziganka_radar_announce
+    alias: "Ziganka: Fusion radar guard-zone announcement"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: event
+        event_type: signalk_ziganka_iii_notification
+    variables:
+      # path = notifications.radar.<radar>.guardZone.<n>
+      parts: "{{ (trigger.event.data.path or '').split('.') }}"
+    condition:
+      - "{{ parts | length == 5 and parts[1] == 'radar' and parts[3] == 'guardZone' }}"
+      - "{{ trigger.event.data.state == 'alert' }}"
+      - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
+      - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
+      - >-
+        {% set last = this.attributes.last_triggered %}
+        {{ last is none or (now() - last).total_seconds() >= states('input_number.ziganka_radar_announce_cooldown') | float(60) }}
+    action:
+      - service: script.ziganka_fusion_warn
+        data:
+          # HALO dual-range radars appear as <serial>A / <serial>B.
+          message: >-
+            Radar target in guard zone {{ parts[4] }}{{ ', range ' ~ parts[2][-1] if parts[2][-1] in ['A', 'B'] else '' }}
 
   # --- Mute switch (Shelly input) -> acknowledge/silence ---
   - id: ziganka_mute_pressed
