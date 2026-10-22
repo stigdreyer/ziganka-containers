@@ -52,6 +52,7 @@ store/
   debian/              # dpkg source for the ziganka-container-store package
 tools/
   build-all.sh         # builds all .deb packages
+  radar-capture.sh     # runs ON the HALPI2: pcap + NMEA 2000 capture for Mayara bug reports (docs/radar-capture.md)
 .github/workflows/
   build.yml            # CI: build on PR/push; publish apt repo on main push
   release.yml          # tag push: create GitHub Release with .deb files
