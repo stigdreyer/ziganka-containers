@@ -17,6 +17,9 @@
 # Radar: Mayara raises `notifications.radar.<radar>.guardZone.<n>` as state
 # `alert` once PER TARGET that enters a guard zone. Those are announced on the
 # Fusion (never the buzzer), rate-limited by input_number.ziganka_radar_announce_cooldown.
+# Radar collision (Mayara plugin >= 1.6.0) raises one notification per ARPA target
+# at `notifications.navigation.closestApproach.radar:<radar>:<target>`:
+# warn -> Fusion once, alarm -> buzzer (generic routing, no special case).
 #
 # The buzzer is METHOD-INDEPENDENT (fail-safe): any active alarm/emergency sounds
 # it unless that notification is silenced or acknowledged in Signal K (a safety
@@ -482,10 +485,22 @@ automation:
       - "{{ trigger.event.data.state == 'warn' }}"
       - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
       - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
+      # Announce once, when raised. API-raised notifications carry createdAt and
+      # are re-emitted on every data refresh (radar/AIS collision: every ~10 s per
+      # target), which would otherwise re-announce for as long as it stays warn.
+      - >-
+        {% set c = (trigger.event.data.value or {}).createdAt %}
+        {{ not c or (now() - as_datetime(c, now())).total_seconds() < 8 }}
     action:
       - service: script.ziganka_fusion_warn
         data:
-          message: "{{ trigger.event.data.message | default('') }}"
+          # Collision alerts (navigation.closestApproach.*): speak CPA/TCPA from
+          # data; the raw message includes the radar serial, which TTS mangles.
+          message: >-
+            {% set d = (trigger.event.data.value or {}).data or {} %}
+            {% if 'closestApproach' in (trigger.event.data.path or '') and d.cpa is number and d.tcpa is number %}
+            Collision risk, {{ d.source | default('') }} target. Closest approach {{ (d.cpa / 1852) | round(1) }} miles in {{ (d.tcpa / 60) | round(0) | int }} minutes
+            {%- else %}{{ trigger.event.data.message | default('') }}{% endif %}
 
   # --- Radar guard zone (Mayara, state `alert`) -> Fusion announcement ---
   # A deliberate exception to "alert is ignored": a new radar target is worth
