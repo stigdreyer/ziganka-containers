@@ -15,6 +15,6 @@ permissions:
 
 jobs:
   check-updates:
-    uses: halos-org/shared-workflows/.github/workflows/check-image-updates.yml@e7da76736a742c2a2b6b4e6b9fa4bd87cc8a2e7c # main as of 2026-05-17
+    uses: halos-org/shared-workflows/.github/workflows/check-image-updates.yml@b295aae0fffe2f7d705a4e70fd32e00f37c705f7 # main as of 2026-10-20 (GHCR pagination fix, shared-workflows#31)
     with:
       compose-pattern: 'apps/*/docker-compose.yml'
