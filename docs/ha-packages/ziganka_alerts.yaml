@@ -25,6 +25,8 @@
 # it unless that notification is silenced or acknowledged in Signal K (a safety
 # alarm must sound even if its source tagged it visual-only). The mute switch
 # stops it by setting silenced/acknowledged. warn -> Fusion announcement only.
+# Exception: paths in input_text.ziganka_noncritical_paths (autopilot wind shift)
+# never buzz; their alarm is announced on the Fusion like a warn.
 #
 # Architecture (verified against the live boat 2026-06-17):
 #   - Ingestion: signalk-ha fires the HA bus event `signalk_ziganka_iii_notification`
@@ -54,6 +56,15 @@ input_text:
     name: Ziganka locally-muted paths
     max: 255
     initial: "[]"
+
+  ziganka_noncritical_paths:
+    # JSON list of notification paths that never sound the buzzer: their
+    # alarm/emergency is announced on the Fusion like a warn instead. A deliberate,
+    # crew-chosen exception to "Signal K owns severity" for known non-safety alarms.
+    # Reset from `initial` on every HA restart — edit here, not in the UI.
+    name: Ziganka non-critical alarm paths
+    max: 255
+    initial: '["notifications.autopilot.PilotWindShift"]'
 
 input_number:
   ziganka_fusion_warn_volume:
@@ -94,7 +105,9 @@ rest:
         device_class: sound
         value_template: >-
           {% set m = states('input_text.ziganka_muted_paths') %}
-          {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+          {% set n = states('input_text.ziganka_noncritical_paths') %}
+          {% set muted = ((m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [])
+                       + ((n | from_json) if n not in ['', 'unknown', 'unavailable', none] else []) %}
           {% set ns = namespace(on=false) %}
           {% for v in (value_json.values() if value_json else []) %}
             {% set val = v.value %}
@@ -419,7 +432,9 @@ automation:
       - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
       - >-
         {% set m = states('input_text.ziganka_muted_paths') %}
-        {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+        {% set n = states('input_text.ziganka_noncritical_paths') %}
+        {% set muted = ((m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [])
+                     + ((n | from_json) if n not in ['', 'unknown', 'unavailable', none] else []) %}
         {{ trigger.event.data.path not in muted }}
     action:
       - service: switch.turn_on
@@ -448,7 +463,9 @@ automation:
           notifs: "{{ resp.content if (resp is defined and resp.content is defined) else none }}"
           muted: >-
             {% set m = states('input_text.ziganka_muted_paths') %}
-            {{ (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] }}
+            {% set n = states('input_text.ziganka_noncritical_paths') %}
+            {{ ((m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [])
+             + ((n | from_json) if n not in ['', 'unknown', 'unavailable', none] else []) }}
           demand: >-
             {% if notifs is none or notifs is string %}unknown
             {% else %}
@@ -481,8 +498,13 @@ automation:
         event_type: signalk_ziganka_iii_notification
     condition:
       # Method-independent: announce any warn (visual or sound) unless it's
-      # already silenced/acknowledged in Signal K.
-      - "{{ trigger.event.data.state == 'warn' }}"
+      # already silenced/acknowledged in Signal K. Non-critical alarms (see
+      # input_text.ziganka_noncritical_paths) are announced here instead of buzzing.
+      - >-
+        {% set n = states('input_text.ziganka_noncritical_paths') %}
+        {% set noncritical = (n | from_json) if n not in ['', 'unknown', 'unavailable', none] else [] %}
+        {{ trigger.event.data.state == 'warn'
+           or (trigger.event.data.state in ['alarm','emergency'] and trigger.event.data.path in noncritical) }}
       - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
       - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
       # Announce once, when raised. API-raised notifications carry createdAt and
