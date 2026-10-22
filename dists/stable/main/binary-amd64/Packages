@@ -33,10 +33,10 @@ Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0
 Conflicts: boat-homeassistant-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-homeassistant-container_2026.10.2-34_all.deb
-Size: 16538
-MD5sum: 6a3dee489c030511287530cc9b2766c8
-SHA1: aa160471446b2a237afbe685f96c01b6ca61239d
-SHA256: d935f2618e9f121c5c654eca36e49ed6be0526b8ae58e3ec3e1a4349c0b78e2a
+Size: 16542
+MD5sum: ee6cca1c3cc13d2e660a4a2d26e49acf
+SHA1: 62c54acddfb2dac45ca88e3c2c10fb89c5dcf97e
+SHA256: 9fe39837223d1462e3ab011b86c93796afe073c39be0c68d011f0f0b7b627dd7
 Section: web
 Priority: optional
 Homepage: https://www.home-assistant.io/
@@ -62,10 +62,10 @@ Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0
 Conflicts: boat-music-assistant-container
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-music-assistant-container_2.10.7-37_all.deb
-Size: 15262
-MD5sum: 6e45944724ed047508159e4563775acb
-SHA1: 40aaab391185bc28e7bb4dacb2083b603d8c5335
-SHA256: 3f7b1595c158db87d77421d9c5b079195cb92a6be9881b0c2a46dc12f2790383
+Size: 15266
+MD5sum: c3c6c2a7dde0d1cc612908028ff3328c
+SHA1: 3f78496490b27a26e6d059acaeeac23d1e799009
+SHA256: 54fa8311aa5c523427c47884290f323be5b3974c5c36b432a00884f0f3f4b09c
 Section: sound
 Priority: optional
 Homepage: https://www.music-assistant.io/
@@ -92,10 +92,10 @@ Installed-Size: 67
 Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0), docker.io (>= 20.10) | docker-ce (>= 20.10)
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-ona-plotter-container_0.0.0+git20260520.347afb4-2_all.deb
-Size: 20332
-MD5sum: 2fa82b48ff729d5f8a5b71d1d36cba37
-SHA1: e88ff12111e91cc81ebf49490e2b3d493a76768a
-SHA256: 4103c9b90290fcd1ef15c5f7e57a451d0b1a24112b9960a9799e822327f6f42a
+Size: 20336
+MD5sum: 07f502908c5fa1c7dfda5cda32381957
+SHA1: f9136c91eb78a4f54b78986ed6856548c635675a
+SHA256: 60fab17382fd7078e0914e694f73a4207711c8ad8735c86784bb5f85ac52667a
 Section: web
 Priority: optional
 Homepage: https://github.com/msallin/ona-plotter
@@ -126,10 +126,10 @@ Installed-Size: 102
 Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0), docker.io (>= 20.10) | docker-ce (>= 20.10), python3-bcrypt
 Breaks: halos-core-containers (<< 0.3.2), homarr-container-adapter (<< 0.4.6)
 Filename: pool/main/ziganka-signalk-server-container_2.31.1-15_all.deb
-Size: 30666
-MD5sum: 4bec4f89fc1edf95c5f6d7a799eebb0b
-SHA1: 7738e0fc16af2f2e8da4a354e5f9fcb14bb1d7d7
-SHA256: 455c4ab5538cb3970507e0cd9a574d809ff827997f48b9f7df2acf77c94cb4b1
+Size: 30658
+MD5sum: 4f32c445d4e0cc994d0cca71370bfe72
+SHA1: 059b6f0a03625daabc1ae32045ca1a02a45c0dc3
+SHA256: c6b6f1d4436eb23cd37386e8c5a480ce0f93e0601f8bf945e63abfcaccff91e9
 Section: net
 Priority: optional
 Homepage: https://signalk.org/
@@ -154,10 +154,10 @@ Installed-Size: 63
 Depends: docker-compose | docker-compose-plugin, halos-core-containers (>= 0.5.0), docker.io (>= 20.10) | docker-ce (>= 20.10), ziganka-music-assistant-container
 Conflicts: boat-snapclient-container
 Filename: pool/main/ziganka-snapclient-container_0.35.0-21_all.deb
-Size: 15042
-MD5sum: 046a9ab75d2a733acb54f9228a791639
-SHA1: 904c13a400427ef15f3b78e5a6e4c946aebaf78a
-SHA256: 78d74a34f671d3ca5699543c2cca7433ac09976625d563421b5207c9ea993e48
+Size: 15048
+MD5sum: 1a7c5cbdab6dfa364ccee8f59d2c9de4
+SHA1: 55c18df9b11b29b900a31f34a648df4d96e76a96
+SHA256: 014cc7612c8e0fe13d04a92235b80a94b8e774c552e24e137aec6ee57018c643
 Section: sound
 Priority: optional
 Homepage: https://github.com/badaix/snapcast
@@ -176,10 +176,10 @@ Maintainer: Stig Dreyer <stigdreyer@nxtmilestone.com>
 Installed-Size: 54
 Depends: docker-compose | docker-compose-plugin, docker.io (>= 20.10) | docker-ce (>= 20.10)
 Filename: pool/main/ziganka-wyoming-piper-container_2.5.2-6_all.deb
-Size: 15170
-MD5sum: 5247809db3b3ee29336ac7500fa72ae8
-SHA1: 9b09ab3c0cac07141c50f994bfe7f7ebcb84def6
-SHA256: 790e2d9c7496e454ac5590eb6b834c53bbaf7231668b6d1a1f48291ada0aa786
+Size: 15182
+MD5sum: 50f558089e191365d537c20dd624b342
+SHA1: 5458ba400e658ee30e4f9dedfbb7c3bb722805fc
+SHA256: 5f6e0a23b9a4e92f5efd8f4ffdab32fa3d19f9c2e3af21fc72d45a7864b65a66
 Section: sound
 Priority: optional
 Homepage: https://github.com/rhasspy/wyoming-piper
