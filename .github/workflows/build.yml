@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# publish-apt replaces the whole Pages site, so an older main build finishing
+# last would roll the repo back. A newer push cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
