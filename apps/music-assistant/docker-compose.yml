@@ -12,13 +12,14 @@ services:
     # entrypoint. The container fs resets on each recreate, so this re-applies
     # cleanly every start. (certifi path resolved dynamically to survive Python
     # version bumps; the entrypoint args mirror the image default.)
+    # Offline at boot (e.g. offshore, no Starlink): start anyway so Piper/Fusion
+    # warnings and the local library work, and restart once (SIGTERM to tini;
+    # restart: unless-stopped) when internet first returns so Spotify/Radio Browser
+    # initialise cleanly instead of sticking in "requires attention".
     entrypoint:
       - /bin/sh
       - -c
-      - "cat /etc/ssl/certs/ca-certificates.crt >> \"$(python3 -c 'import certifi;print(certifi.where())')\"; exec /usr/local/bin/entrypoint.sh --data-dir /data --cache-dir /data/.cache"
-    depends_on:
-      network-check:
-        condition: service_healthy
+      - "cat /etc/ssl/certs/ca-certificates.crt >> \"$(python3 -c 'import certifi;print(certifi.where())')\"; up() { python3 -c 'import socket;socket.create_connection((\"1.1.1.1\",80),5)' 2>/dev/null; }; up || { echo '[network-check] offline at start - MA starts anyway, restarting it once when internet returns'; ( until up; do sleep 10; done; echo '[network-check] internet up - restarting MA'; kill -TERM 1 ) & }; exec /usr/local/bin/entrypoint.sh --data-dir /data --cache-dir /data/.cache"
     init: true
     restart: unless-stopped
     logging:
@@ -61,27 +62,3 @@ services:
       timeout: 10s
       start_period: 60s
       retries: 5
-
-  network-check:
-    image: busybox
-    container_name: ma-network-check
-    restart: unless-stopped
-    volumes:
-      - ./assets/wait-for-internet.sh:/wait-for-internet.sh:ro
-    entrypoint: ["/bin/sh", "/wait-for-internet.sh"]
-    # Becomes healthy once /tmp/ready is touched (internet up or timeout reached).
-    # start_period must cover wait-for-internet.sh's own wait (INTERNET_WAIT_TIMEOUT,
-    # default 180s) — otherwise Docker marks this container unhealthy on the very
-    # first 5s check, and `depends_on: condition: service_healthy` treats that as
-    # a hard failure instead of waiting, so MA never gets the benefit of the
-    # script's built-in retry/timeout logic (seen at boot when DNS wasn't up yet).
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f /tmp/ready ]"]
-      interval: 5s
-      timeout: 3s
-      start_period: 190s
-      retries: 1
-    logging:
-      driver: journald
-      options:
-        tag: "{{.Name}}"

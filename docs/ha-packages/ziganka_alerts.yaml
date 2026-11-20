@@ -9,24 +9,33 @@
 # acknowledge. Routing is severity-driven.
 #
 #   state       buzzer (Shelly)     Fusion (chime + TTS)
-#   emergency   ✓ continuous        –
-#   alarm       ✓ continuous        –
-#   warn        –                   ✓ once
+#   emergency   ✓ continuous *      –
+#   alarm       ✓ continuous *      –
+#   warn        –                   ✓ once *
 #   alert       – (ignored)         –   (exception: radar guard zone -> ✓ once, throttled)
+#
+#   * ONLY for paths in input_text.ziganka_buzzer_paths (prefix match): collision
+#     (closestApproach), anchor alarm, and our own selftest. Every other alarm/warn
+#     (Raymarine autopilot, depth, ...) is already shown + acknowledged on the two
+#     Raymarine displays, so it neither buzzes nor is announced here.
 #
 # Radar: Mayara raises `notifications.radar.<radar>.guardZone.<n>` as state
 # `alert` once PER TARGET that enters a guard zone. Those are announced on the
 # Fusion (never the buzzer), rate-limited by input_number.ziganka_radar_announce_cooldown.
 # Radar collision (Mayara plugin >= 1.6.0) raises one notification per ARPA target
-# at `notifications.navigation.closestApproach.radar:<radar>:<target>`:
-# warn -> Fusion once, alarm -> buzzer (generic routing, no special case).
+# at `notifications.navigation.closestApproach.radar:<radar>:<target>`; the
+# @signalk/collision-alerts plugin uses the same prefix: warn -> Fusion once,
+# alarm -> buzzer.
 #
-# The buzzer is METHOD-INDEPENDENT (fail-safe): any active alarm/emergency sounds
-# it unless that notification is silenced or acknowledged in Signal K (a safety
+# Starlink (signalk-starlink-offshore): `notifications.starlinkOffshore.territorialSea`
+# warns ~2 nm before entering/leaving territorial waters (= unmetered <-> metered).
+# The plugin re-sends it every ~2 s (its de-dupe key includes a timestamp), so it is
+# announced once per DIRECTION (Entering/Leaving ...), not per update.
+#
+# The buzzer is METHOD-INDEPENDENT (fail-safe): any active alarm/emergency on an
+# allowlisted path sounds it unless silenced or acknowledged in Signal K (a safety
 # alarm must sound even if its source tagged it visual-only). The mute switch
 # stops it by setting silenced/acknowledged. warn -> Fusion announcement only.
-# Exception: paths in input_text.ziganka_noncritical_paths (autopilot wind shift)
-# never buzz; their alarm is announced on the Fusion like a warn.
 #
 # Architecture (verified against the live boat 2026-06-17):
 #   - Ingestion: signalk-ha fires the HA bus event `signalk_ziganka_iii_notification`
@@ -57,14 +66,24 @@ input_text:
     max: 255
     initial: "[]"
 
-  ziganka_noncritical_paths:
-    # JSON list of notification paths that never sound the buzzer: their
-    # alarm/emergency is announced on the Fusion like a warn instead. A deliberate,
-    # crew-chosen exception to "Signal K owns severity" for known non-safety alarms.
-    # Reset from `initial` on every HA restart — edit here, not in the UI.
-    name: Ziganka non-critical alarm paths
+  ziganka_buzzer_paths:
+    # JSON list of notification-path PREFIXES that may sound the buzzer (alarm/
+    # emergency) and be announced on the Fusion (warn). Everything else is left to
+    # the Raymarine displays. A deliberate, crew-chosen exception to "Signal K owns
+    # severity". Reset from `initial` on every HA restart — edit here, not in the UI.
+    #   closestApproach. : @signalk/collision-alerts + Mayara radar collision
+    #   navigation.anchor: hoekens-anchor-alarm (severity set in its plugin config)
+    #   ziganka.         : the self-test helpers below
+    name: Ziganka buzzer/announce path prefixes
     max: 255
-    initial: '["notifications.autopilot.PilotWindShift"]'
+    initial: '["notifications.navigation.closestApproach.","notifications.navigation.anchor","notifications.ziganka."]'
+
+  ziganka_starlink_last:
+    # Last announced Starlink crossing, e.g. "Leaving Germany waters" (distance
+    # stripped). Announce only when it changes -> once per direction. No `initial`:
+    # restored across HA restarts.
+    name: Ziganka last Starlink crossing announced
+    max: 255
 
 input_number:
   ziganka_fusion_warn_volume:
@@ -96,23 +115,25 @@ rest:
     scan_interval: 30
     timeout: 8
     binary_sensor:
-      # The buzzer "demand": ON when any un-muted, active warn/alarm/emergency is
-      # NOT silenced and NOT acknowledged. Method-independent (fail-safe: a
-      # safety alarm sounds even if the source tagged it visual-only); the mute
-      # switch stops it by setting silenced/acknowledged in Signal K.
+      # The buzzer "demand": ON when any un-muted, active alarm/emergency on an
+      # allowlisted path (ziganka_buzzer_paths) is NOT silenced and NOT
+      # acknowledged. Method-independent (fail-safe: a safety alarm sounds even if
+      # the source tagged it visual-only); the mute switch stops it by setting
+      # silenced/acknowledged in Signal K.
       - name: "Ziganka Buzzer Demand"
         unique_id: ziganka_buzzer_demand
         device_class: sound
         value_template: >-
           {% set m = states('input_text.ziganka_muted_paths') %}
-          {% set n = states('input_text.ziganka_noncritical_paths') %}
-          {% set muted = ((m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [])
-                       + ((n | from_json) if n not in ['', 'unknown', 'unavailable', none] else []) %}
+          {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+          {% set allow = states('input_text.ziganka_buzzer_paths') | from_json(default=[]) %}
           {% set ns = namespace(on=false) %}
           {% for v in (value_json.values() if value_json else []) %}
             {% set val = v.value %}
             {% set st = val.status or {} %}
-            {% if val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and v.path not in muted %}
+            {% set p = namespace(ok=false) %}
+            {% for a in allow %}{% if v.path.startswith(a) %}{% set p.ok = true %}{% endif %}{% endfor %}
+            {% if p.ok and val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and v.path not in muted %}
               {% set ns.on = true %}
             {% endif %}
           {% endfor %}
@@ -257,12 +278,16 @@ script:
         response_variable: resp
       - variables:
           notifs: "{{ resp.content if (resp is defined and resp.content is defined) else {} }}"
+          # Only what actually buzzes (allowlist): leave Raymarine-owned alarms alone.
           sounding: >-
+            {% set allow = states('input_text.ziganka_buzzer_paths') | from_json(default=[]) %}
             {% set ns = namespace(items=[]) %}
             {% for k, v in notifs.items() %}
               {% set val = v.value %}
               {% set st = val.status or {} %}
-              {% if val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) %}
+              {% set p = namespace(ok=false) %}
+              {% for a in allow %}{% if v.path.startswith(a) %}{% set p.ok = true %}{% endif %}{% endfor %}
+              {% if p.ok and val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) %}
                 {% set ns.items = ns.items + [{'id': val.id, 'path': v.path, 'status': val.status}] %}
               {% endif %}
             {% endfor %}
@@ -432,10 +457,12 @@ automation:
       - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
       - >-
         {% set m = states('input_text.ziganka_muted_paths') %}
-        {% set n = states('input_text.ziganka_noncritical_paths') %}
-        {% set muted = ((m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [])
-                     + ((n | from_json) if n not in ['', 'unknown', 'unavailable', none] else []) %}
-        {{ trigger.event.data.path not in muted }}
+        {% set muted = (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] %}
+        {% set allow = states('input_text.ziganka_buzzer_paths') | from_json(default=[]) %}
+        {% set path = trigger.event.data.path or '' %}
+        {% set p = namespace(ok=false) %}
+        {% for a in allow %}{% if path.startswith(a) %}{% set p.ok = true %}{% endif %}{% endfor %}
+        {{ p.ok and path not in muted }}
     action:
       - service: switch.turn_on
         target: { entity_id: switch.ziganka_iii_external_alarm }
@@ -463,9 +490,8 @@ automation:
           notifs: "{{ resp.content if (resp is defined and resp.content is defined) else none }}"
           muted: >-
             {% set m = states('input_text.ziganka_muted_paths') %}
-            {% set n = states('input_text.ziganka_noncritical_paths') %}
-            {{ ((m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [])
-             + ((n | from_json) if n not in ['', 'unknown', 'unavailable', none] else []) }}
+            {{ (m | from_json) if m not in ['', 'unknown', 'unavailable', none] else [] }}
+          allow: "{{ states('input_text.ziganka_buzzer_paths') | from_json(default=[]) }}"
           demand: >-
             {% if notifs is none or notifs is string %}unknown
             {% else %}
@@ -473,7 +499,9 @@ automation:
             {% for k, v in notifs.items() %}
               {% set val = v.value %}
               {% set st = val.status or {} %}
-              {% if val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and v.path not in muted %}{% set ns.on = true %}{% endif %}
+              {% set p = namespace(ok=false) %}
+              {% for a in allow %}{% if v.path.startswith(a) %}{% set p.ok = true %}{% endif %}{% endfor %}
+              {% if p.ok and val.state in ['alarm','emergency'] and not (st.silenced | default(false)) and not (st.acknowledged | default(false)) and v.path not in muted %}{% set ns.on = true %}{% endif %}
             {% endfor %}
             {{ 'on' if ns.on else 'off' }}
             {% endif %}
@@ -497,14 +525,16 @@ automation:
       - platform: event
         event_type: signalk_ziganka_iii_notification
     condition:
-      # Method-independent: announce any warn (visual or sound) unless it's
-      # already silenced/acknowledged in Signal K. Non-critical alarms (see
-      # input_text.ziganka_noncritical_paths) are announced here instead of buzzing.
+      # Method-independent: announce a warn (visual or sound) on an allowlisted
+      # path (input_text.ziganka_buzzer_paths) unless it's already silenced/
+      # acknowledged in Signal K. Other warns are left to the Raymarine displays.
+      - "{{ trigger.event.data.state == 'warn' }}"
       - >-
-        {% set n = states('input_text.ziganka_noncritical_paths') %}
-        {% set noncritical = (n | from_json) if n not in ['', 'unknown', 'unavailable', none] else [] %}
-        {{ trigger.event.data.state == 'warn'
-           or (trigger.event.data.state in ['alarm','emergency'] and trigger.event.data.path in noncritical) }}
+        {% set allow = states('input_text.ziganka_buzzer_paths') | from_json(default=[]) %}
+        {% set path = trigger.event.data.path or '' %}
+        {% set p = namespace(ok=false) %}
+        {% for a in allow %}{% if path.startswith(a) %}{% set p.ok = true %}{% endif %}{% endfor %}
+        {{ p.ok }}
       - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
       - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
       # Announce once, when raised. API-raised notifications carry createdAt and
@@ -552,6 +582,41 @@ automation:
           # HALO dual-range radars appear as <serial>A / <serial>B.
           message: >-
             Radar target in guard zone {{ parts[4] }}{{ ', range ' ~ parts[2][-1] if parts[2][-1] in ['A', 'B'] else '' }}
+
+  # --- Starlink offshore (signalk-starlink-offshore) -> Fusion, once per direction ---
+  # Entering/leaving territorial waters = unmetered <-> metered. The plugin re-sends
+  # the warn every ~2 s with changing distance/ETA, so dedupe on the message with
+  # the distance stripped ("Leaving Germany waters"): announce only when it changes.
+  # mode single: events arriving while the announcement plays are dropped; the helper
+  # is set first, so the next event after it sees the same key and is skipped.
+  - id: ziganka_starlink_announce
+    alias: "Ziganka: Fusion Starlink offshore announcement"
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: event
+        event_type: signalk_ziganka_iii_notification
+    variables:
+      msg: "{{ trigger.event.data.message or '' }}"
+      key: "{{ msg | regex_replace(' in [0-9.]+ nm.*$', '') }}"
+    condition:
+      - "{{ trigger.event.data.path == 'notifications.starlinkOffshore.territorialSea' }}"
+      - "{{ trigger.event.data.state == 'warn' }}"
+      - "{{ not ((trigger.event.data.value.status or {}).silenced | default(false)) }}"
+      - "{{ not ((trigger.event.data.value.status or {}).acknowledged | default(false)) }}"
+      - "{{ key != '' and key != states('input_text.ziganka_starlink_last') }}"
+    action:
+      - service: input_text.set_value
+        target: { entity_id: input_text.ziganka_starlink_last }
+        data: { value: "{{ key[:255] }}" }
+      - service: script.ziganka_fusion_warn
+        data:
+          # Drop the "(≈10m)" ETA, say "nautical miles"; "Leaving" = heading out of
+          # the 12 nm zone (Starlink turns metered), "Entering" = back to unmetered.
+          message: >-
+            Starlink. {{ msg | regex_replace(' *[(].*$', '') | replace(' nm', ' nautical miles') }}.
+            {%- if msg.startswith('Leaving') %} Internet will become metered.
+            {%- elif msg.startswith('Entering') %} Internet will become unmetered.{% endif %}
 
   # --- Mute switch (Shelly input) -> acknowledge/silence ---
   - id: ziganka_mute_pressed

@@ -25,6 +25,20 @@ alarm logic. Routing is severity-driven.
 | alert      | – (ignored)           | – (except radar ↓)   |
 | alert, radar guard zone | –          | ✓ once, throttled    |
 
+**Allowlist (buzzer + Fusion warn).** The two Raymarine displays already show and acknowledge
+their own alarms, so the buzzer and the Fusion warn announcement apply **only** to paths whose
+prefix is in `input_text.ziganka_buzzer_paths` (edit in the YAML, it resets on HA restart):
+
+| Prefix | Source |
+|--------|--------|
+| `notifications.navigation.closestApproach.` | `@signalk/collision-alerts` and Mayara radar collision |
+| `notifications.navigation.anchor` | `hoekens-anchor-alarm` (drag severity is a plugin setting; ours is `emergency`) |
+| `notifications.ziganka.` | the self-test helpers |
+
+Every other alarm/warn (autopilot, depth, …) neither buzzes nor is announced; the mute switch also
+only touches allowlisted alarms. Radar guard-zone and Starlink announcements have their own
+automations (below) and are not on the list.
+
 `normal`/`nominal` = cleared. The visual (LED) channel and mobile push are **out of scope in v1**.
 
 The buzzer is **method-independent** (fail-safe): any active `alarm`/`emergency` sounds it unless
@@ -43,7 +57,7 @@ gated on `method` containing `"sound"`, but a visual-only alarm then stayed sile
   every event (plus a 10 s backstop + HA start) and set the buzzer relay ON/OFF. The GET is open
   (no auth) and **includes cleared (`state:normal`) entries**, so the logic filters
   `state not in [normal, nominal]`.
-- **Buzzer:** ON when any un-muted, active `emergency`/`alarm` still carries method `sound`
+- **Buzzer:** ON when any un-muted, active allowlisted `emergency`/`alarm`
   (measured ~0.3 s from event to relay-on). OFF when none remain (event-driven, ≤10 s worst case).
 - **Mute switch** → `script.ziganka_mute`: for each sounding notification it `acknowledge`s
   (or `silence`s, per the runtime `status` flags) via the v2 API, cuts the relay immediately, and
@@ -76,6 +90,12 @@ gated on `method` containing `"sound"`, but a visual-only alarm then stayed sile
   snapshot and restore). It never sounds the buzzer. A global cooldown
   (`input_number.ziganka_radar_announce_cooldown`, default 60 s) stops a busy anchorage from
   producing back-to-back announcements.
+- **Starlink offshore:** `signalk-starlink-offshore` warns ~2 nm before entering/leaving territorial
+  waters (unmetered ↔ metered) on `notifications.starlinkOffshore.territorialSea`. It re-sends the
+  warn every ~2 s (its de-dupe key includes a timestamp), so `ziganka_starlink_announce` announces
+  once per **direction**: it dedupes on the message with the distance stripped ("Leaving Germany
+  waters", stored in `input_text.ziganka_starlink_last`) and adds "Internet will become metered /
+  unmetered". Never the buzzer.
 - **Fail-loud reliability:** if Signal K becomes unreachable for 60 s the buzzer is sounded
   (verified: ~85 s end-to-end) and a persistent notification is raised; if the Shelly goes
   offline a UI/log alert is raised. The critical buzzer path depends only on `signalk_ha` + the
@@ -152,6 +172,7 @@ keys.
 
 From HA → Developer Tools → Actions (or the API):
 
+- `script.ziganka_alert_test` with `path: autopilot.test`, `level: alarm` → **silent** (not allowlisted).
 - `script.ziganka_alert_test` with `level: warn` → Fusion speaks once, **no buzzer**.
 - `script.ziganka_alert_test` with `level: alarm` / `emergency` → **buzzer sounds**.
 - Flip the physical **mute switch** (or call `script.ziganka_mute`) → buzzer stops, Signal K
