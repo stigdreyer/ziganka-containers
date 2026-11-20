@@ -694,7 +694,7 @@ automation:
           title: "Ziganka buzzer OFFLINE"
           message: >-
             The Shelly buzzer is unreachable — audible alarms cannot sound.
-            Check the Shelly at 192.168.88.227.
+            Check the Shelly at 192.168.88.223.
       - service: system_log.write
         data:
           level: error

@@ -107,10 +107,10 @@ gated on `method` containing `"sound"`, but a visual-only alarm then stayed sile
    (Settings → Devices & Services). A stale duplicate ("Signal K (Unknown Vessel)") should be
    removed — it fires a second event_type and is a wasteful second subscription.
 2. **Shelly 1 Gen3 in HA, local mode.** Add via Settings → Devices & Services → Shelly →
-   host `192.168.88.227` (no auth). The relay must be **detached** so HA drives the buzzer and
+   host `192.168.88.223` (no auth). The relay must be **detached** so HA drives the buzzer and
    the switch is a pure mute signal — set on the device:
    ```bash
-   curl -X POST http://192.168.88.227/rpc -H 'Content-Type: application/json' \
+   curl -X POST http://192.168.88.223/rpc -H 'Content-Type: application/json' \
      -d '{"id":1,"method":"Switch.SetConfig","params":{"id":0,"config":{"in_mode":"detached","initial_state":"off","name":"Buzzer"}}}'
    ```
    Resulting entities: `switch.ziganka_iii_external_alarm` (buzzer),
